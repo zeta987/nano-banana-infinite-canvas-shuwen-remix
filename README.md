@@ -4,6 +4,10 @@
 
 A third-stage remix of Nano Banana Infinite Canvas, combining an infinite canvas workflow with Gemini 3 image generation, prompt optimization, webpage embedding, and bilingual UI improvements.
 
+![English home view screenshot](images/en-home.jpg)
+
+![English feature overview screenshot](images/en-features.jpg)
+
 This repository builds on the Shuwen Learning Web adaptation of @Prompt_case's original work, extending it with workflow, interface, and usability updates.
 
 ## Run Locally
