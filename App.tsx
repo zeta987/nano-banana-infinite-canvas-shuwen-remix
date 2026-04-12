@@ -108,7 +108,6 @@ const translations: Record<string, Record<string, string>> = {
     generationHistoryEmpty: 'Select elements on the canvas and click "Generate" to create an image.',
     closeGenerationPanel: 'Close Generation Panel',
     openGenerationPanel: 'Open Generation Panel',
-    addToCanvas: 'Add to Canvas',
     deleteImage: 'Delete Image',
     generationCount: 'Generation Count',
     addWebpage: 'Add Webpage',
@@ -456,6 +455,7 @@ const App: React.FC = () => {
   const lastImagePosition = useRef<Point | null>(null);
   const zIndexCounter = useRef(INITIAL_ELEMENTS.length);
   const dragCounter = useRef(0);
+  const dragStartPositionsRef = useRef<Record<string, Point> | null>(null);
   const lastWorldMousePosition = useRef<Point | null>(null);
   
   const ai = useRef<GoogleGenAI | null>(null);
@@ -1277,19 +1277,37 @@ const App: React.FC = () => {
       const snap = (v: number) => snapToGrid ? Math.round(v / GRID_SIZE) * GRID_SIZE : v;
 
       if (dragDelta && selectedElementIds.length > 1 && selectedElementIds.includes(updatedElement.id)) {
+        // Capture start positions on first drag frame (dragDelta is now cumulative)
+        if (!dragStartPositionsRef.current) {
+          const startPos: Record<string, Point> = {};
+          const selectedSet = new Set(selectedElementIds);
+          prevElements.forEach(el => {
+            if (selectedSet.has(el.id)) {
+              startPos[el.id] = { x: el.position.x, y: el.position.y };
+            }
+          });
+          dragStartPositionsRef.current = startPos;
+        }
+
+        const startPositions = dragStartPositionsRef.current;
         const selectedSet = new Set(selectedElementIds);
+
         return prevElements.map(el => {
+          if (!selectedSet.has(el.id)) return el;
+
+          const startPos = startPositions[el.id];
+          if (!startPos) return el;
+
+          const newX = snap(startPos.x + dragDelta.x);
+          const newY = snap(startPos.y + dragDelta.y);
+
           if (el.id === updatedElement.id) {
-            const snappedX = snap(updatedElement.position.x);
-            const snappedY = snap(updatedElement.position.y);
-            return { ...updatedElement, position: { x: snappedX, y: snappedY } } as CanvasElement;
+            // Dragged element: preserve updated properties (e.g., arrow start/end)
+            return { ...updatedElement, position: { x: newX, y: newY } } as CanvasElement;
           }
-          if (selectedSet.has(el.id)) {
-             const newX = el.position.x + dragDelta.x;
-             const newY = el.position.y + dragDelta.y;
-             return { ...el, position: { x: snap(newX), y: snap(newY) } } as CanvasElement;
-          }
-          return el;
+
+          // Companion elements: absolute position from frozen start + cumulative delta
+          return { ...el, position: { x: newX, y: newY } } as CanvasElement;
         });
       } else {
         return prevElements.map(el => {
@@ -1315,6 +1333,7 @@ const App: React.FC = () => {
   }, [setElements]);
 
   const handleInteractionEnd = useCallback(() => {
+    dragStartPositionsRef.current = null;
     setElements(currentElements => currentElements, { addToHistory: true });
   }, [setElements]);
 

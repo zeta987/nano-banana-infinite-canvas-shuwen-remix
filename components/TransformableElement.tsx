@@ -231,7 +231,9 @@ export const TransformableElement: React.FC<TransformableElementProps> = ({
 
         if (type === 'drag') {
             const newPosition = { x: startElement.position.x + dx, y: startElement.position.y + dy };
-            const delta = { x: newPosition.x - element.position.x, y: newPosition.y - element.position.y };
+            // Pass cumulative delta (from drag start) instead of frame delta
+            // to avoid stale-closure drift when React re-renders lag behind mousemove events
+            const delta = { x: dx, y: dy };
             
             let updatedElement: CanvasElement;
 
