@@ -8,7 +8,7 @@ A third-stage remix of Nano Banana Infinite Canvas, combining an infinite canvas
 
 ![English feature overview screenshot](https://github.com/user-attachments/assets/46dd3c25-819a-4159-98a6-e1d7427d4c29)
 
-This repository builds on the Shuwen Learning Web adaptation of @Prompt_case's original work, extending it with workflow, interface, and usability updates.
+This repository builds on the 述文老師學習網 adaptation of @Prompt_case's original work, extending it with workflow, interface, and usability updates.
 
 ## Run Locally
 
@@ -82,7 +82,7 @@ This project follows a three-stage lineage:
 1. **Original Creator:** Prompt_case
    *Contribution:* Core UI design, infinite canvas foundations, and element interaction workflow.
    *Links:* [Threads](https://www.threads.net/@prompt_case) | [Patreon](https://www.patreon.com/MattTrendsPromptEngineering)
-2. **Second Mod and Optimization:** Shuwen Learning Web
+2. **Second Mod and Optimization:** 述文老師學習網
    *Contribution:* Gemini model upgrades, prompt-analysis improvements, Traditional Chinese localization, and teaching-oriented workflow refinements.
    *Link:* [Article and version overview](https://harmonica80.blogspot.com/2025/12/ainano-banana-infinite-canvas-gemini-3.html)
 3. **Current Remix:** This repository
@@ -92,7 +92,7 @@ This project follows a three-stage lineage:
 
 This repository is a **mixed-rights project**, not a single-license open-source release.
 
-As of 2026-04-12, the public Shuwen Learning Web homepage states that website articles are licensed under CC BY-NC-SA 4.0. However, the public Prompt Case Patreon pages reviewed for this project did not show a separate public software license or relicensing grant for the original Nano Banana Infinite Canvas codebase. Additionally, Creative Commons does not recommend CC licenses for software code.
+As of 2026-04-12, the public 述文老師學習網 homepage states that website articles are licensed under CC BY-NC-SA 4.0. However, the public Prompt Case Patreon pages reviewed for this project did not show a separate public software license or relicensing grant for the original Nano Banana Infinite Canvas codebase. Additionally, Creative Commons does not recommend CC licenses for software code.
 
 See [LICENSE.md](LICENSE.md) for the current rights and attribution notice.
 
