@@ -1,2 +1,12 @@
 dist
 node_modules
+image/
+.agent/
+.agents/
+.claude/
+.codex/
+.cursor/
+.gemini/
+openspec/
+.playwright-mcp/
+*.png
