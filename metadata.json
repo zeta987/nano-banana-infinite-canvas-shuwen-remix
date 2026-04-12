@@ -1,0 +1,5 @@
+{
+  "name": "Remix: (合併版)Nano Banana Infinite Canvas 影像創作無限畫布 Ver 3.3(Gemini 3 Flash 與 Nano Banana 2 可切換)",
+  "description": "20260302：\n- 將 Gemini 3 Pro 升級至最新的 Nano Banana 2 (gemini-3.1-flash-image-preview) 模型\n- 優化模型切換標識與 UI 顯示\n-  Nano Banana 2 增加生成圖片解析度 512 選項\n\n20260118：\n- 將 Gemini 3 Flash 與 Gemini 3 Pro 版本合併，可在同一個頁面中自由切換\n- 新增影像裁切功能\n- 新增開啟 APP 後，已生成的 AI 影像數量與提示詞優化次數資訊，方便使用者評估是否即將到達使用量上限\n\n20260102：\n- 新增物件對齊與排版功能，可以針對選取物件進行手動或是自動排版\n\n20251230：\n- 新增「複製到剪貼簿」功能，讓白板的文字與影像可以直接透過系統剪貼簿複製到其他軟體中使用\n- 選單面板新增「複製到剪貼簿」按鈕，方便觸控式螢幕的操作\n\n20251022 重大模型升級：\n\n- 核心推理引擎全面升級至 Gemini 3 Flash Preview\n- 優化草稿分析與提示詞建議的邏輯深度\n- 提升繁體中文翻譯與創意變化的精準度\n- 保留專門的 Gemini 2.5 Flash Image 進行高品質影像編輯\n- 視覺 UI 優化，強化升級感標識",
+  "requestFramePermissions": []
+}
