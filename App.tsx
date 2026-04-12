@@ -25,7 +25,7 @@ export const COLORS = [
 const GRID_SIZE = 10;
 
 const INITIAL_ELEMENTS: CanvasElement[] = [
-  { id: '1', type: 'note', position: { x: 20, y: -200 }, width: 500, height: 260, rotation: 0, zIndex: 1, content: '[ 🍌 Nano Banana 無限畫布 Infinite Canvas 🍌 ]\n\nThreads: @Prompt_case | 官方社群: @Prompt_case\n\nCopyright: Prompt_case | 版權所有\n\n述文老師依據原作者 2.5 版進行優化\n並將模型從 Gemini 2.5 升級至最新的 Gemini 3 Flash 與 Nano Banana 2 可切換版本\n\n教學文章：https://harmonica80.blogspot.com/2026/01/ainano-banana-infinite-canvas-gemini-3.html', color: 'bg-blue-600', textAlign: 'center' },
+  { id: '1', type: 'note', position: { x: 20, y: -200 }, width: 550, height: 320, rotation: 0, zIndex: 1, content: '[ 🍌 Nano Banana 無限畫布 Infinite Canvas 🍌 ]\n\n👑 原創作者 (Original Creator): @Prompt_case\nThreads: @Prompt_case | Patreon: www.patreon.com/MattTrendsPromptEngineering\nCopyright: Prompt_case | 版權所有\n\n🛠️ 二次創作與優化 (Second Mod): 述文老師學習網\n教學文章：https://harmonica80.blogspot.com/2025/12/ainano-banana-infinite-canvas-gemini-3.html\n\n✨ 三次修改版 (Current Version): 基於述文老師版本進階修改\n(加入 Gemini 3 聯網搜尋、UI 優化、網頁嵌入等新功能)', color: 'bg-blue-600', textAlign: 'center' },
   { id: '2', type: 'note', position: { x: 300, y: 80 }, width: 280, height: 320, rotation: -10, zIndex: 2, content: '🕹️ CONTROL / 控制: \n\n● Pan / 平移:\n   Hold [SPACE] or [Middle Mouse Button]\n   按住 [空白鍵] 或 [滑鼠中鍵]\n\n● Zoom / 縮放: [SCROLL] / [滾輪]\n\n● Options / 選項: [Right-click] / [右鍵]', color: 'bg-green-500' },
   { id: '3', type: 'note', position: { x: -250, y: 80 }, width: 280, height: 200, rotation: 5, zIndex: 0, content: '⚡ Shortcut / 捷徑:\n\n● [Command+Z] for Undo / 復原\n\n● [Shift+Command+Z] for Redo / 重做\n\n● [Command+G] for Group / 群組', color: 'bg-yellow-500' },
 ];
