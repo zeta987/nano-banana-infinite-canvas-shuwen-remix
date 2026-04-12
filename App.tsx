@@ -1888,7 +1888,7 @@ const App: React.FC = () => {
       }
 
       const updates = selected.map((el) => {
-        let newPos = { ...el.position };
+        const newPos = { ...el.position };
         if (type === 'left') newPos.x = targetValue + el.width / 2;
         if (type === 'center') newPos.x = targetValue;
         if (type === 'right') newPos.x = targetValue - el.width / 2;

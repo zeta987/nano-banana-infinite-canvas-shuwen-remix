@@ -301,7 +301,7 @@ export const TransformableElement: React.FC<TransformableElementProps> = ({
       onSelect(element.id, shiftKey);
 
       const startPoint = { x: clientX, y: clientY };
-      let interactionDetails: Interaction = {
+      const interactionDetails: Interaction = {
         type,
         startPoint,
         startElement: element,

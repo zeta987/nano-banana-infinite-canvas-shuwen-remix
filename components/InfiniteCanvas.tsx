@@ -47,8 +47,8 @@ const OutpaintingFrame: React.FC<OutpaintingFrameProps> = ({
       const dx = (point.clientX - startPoint.x) / zoom;
       const dy = (point.clientY - startPoint.y) / zoom;
 
-      let { position, width, height } = startFrame;
-      let newPos = { ...position };
+      const { position, width, height } = startFrame;
+      const newPos = { ...position };
       let newWidth = width;
       let newHeight = height;
 

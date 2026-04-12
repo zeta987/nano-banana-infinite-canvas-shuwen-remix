@@ -622,8 +622,8 @@ export const ImageEditModal: React.FC<ImageEditModalProps> = ({
           const { highlight, shadow, sharpness } = adjustmentsToApply;
 
           if (highlight !== 0 || shadow !== 0 || sharpness !== 0) {
-            let imageData = ctx.getImageData(0, 0, width, height);
-            let data = imageData.data;
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const data = imageData.data;
 
             if (highlight !== 0 || shadow !== 0) {
               const hFactor = highlight / 100;
