@@ -503,7 +503,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(({
     }
   }, [isPanning, startPan, groupInteraction, onUpdateMultipleElements, zoom, pan, onMouseMove, screenToWorld]);
 
-  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+  const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
     if (!canvasRef.current) return;
 
@@ -516,7 +516,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(({
     zoomToPoint(newZoom, { x: mouseX, y: mouseY });
   }, [zoom, zoomToPoint]);
   
-  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+  const handleTouchStart = useCallback((e: TouchEvent) => {
     const target = e.target as HTMLElement;
     const isGroupHandle = target.closest('.group-transform-handle');
 
@@ -545,11 +545,11 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(({
         touchStateRef.current.startPoint = { x: touch.clientX, y: touch.clientY };
         touchStateRef.current.didMove = false;
         touchStateRef.current.isMarquee = false;
-        
+
         touchStateRef.current.longPressTimeout = window.setTimeout(() => {
             if (!touchStateRef.current.didMove) {
                 const worldPoint = screenToWorld({ x: touch.clientX, y: touch.clientY });
-                onContextMenu(e, worldPoint, null);
+                onContextMenu(e as unknown as React.TouchEvent, worldPoint, null);
             }
         }, 500);
 
@@ -558,7 +558,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(({
     }
   }, [onContextMenu, screenToWorld, onMouseMove]);
 
-  const handleTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+  const handleTouchMove = useCallback((e: TouchEvent) => {
     const target = e.target as HTMLElement;
     if (target.closest('.transform-handle, .element-body, .generate-controls, .analysis-controls, .group-transform-handle')) {
       return;
@@ -681,7 +681,22 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(({
   useEffect(() => {
     setResetViewCallback(resetView);
   }, [resetView, setResetViewCallback]);
-  
+
+  // Register wheel/touch listeners as non-passive so preventDefault() works
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const opts: AddEventListenerOptions = { passive: false };
+    el.addEventListener('wheel', handleWheel, opts);
+    el.addEventListener('touchstart', handleTouchStart, opts);
+    el.addEventListener('touchmove', handleTouchMove, opts);
+    return () => {
+      el.removeEventListener('wheel', handleWheel);
+      el.removeEventListener('touchstart', handleTouchStart);
+      el.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, [handleWheel, handleTouchStart, handleTouchMove]);
+
   const getRotatedCorners = (el: CanvasElement): Point[] => {
     const { x, y } = el.position;
     const { width, height, rotation } = el;
@@ -849,10 +864,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
       onMouseMove={handleMouseMove}
-      onWheel={handleWheel}
       onContextMenu={handleCanvasContextMenu}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       onTouchCancel={handleTouchEnd}
       onDragOver={(e) => e.preventDefault()}
@@ -860,7 +872,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(({
         e.preventDefault();
         const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
         if (url && onUrlDrop) {
-          const rect = containerRef.current?.getBoundingClientRect();
+          const rect = canvasRef.current?.getBoundingClientRect();
           if (rect) {
             const x = (e.clientX - rect.left - pan.x) / zoom;
             const y = (e.clientY - rect.top - pan.y) / zoom;
