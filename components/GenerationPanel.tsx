@@ -5,6 +5,7 @@ interface GenerationPanelProps {
   images: string[];
   onAddToCanvas: (imageUrl: string) => void;
   onDelete: (index: number) => void;
+  t: (key: string) => string;
 }
 
 export const GenerationPanel: React.FC<GenerationPanelProps> = ({
@@ -12,6 +13,7 @@ export const GenerationPanel: React.FC<GenerationPanelProps> = ({
   images,
   onAddToCanvas,
   onDelete,
+  t,
 }) => {
   const [isOpen, setIsOpen] = useState(true);
 
@@ -19,23 +21,26 @@ export const GenerationPanel: React.FC<GenerationPanelProps> = ({
     <>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`absolute top-1/2 -translate-y-1/2 z-20 bg-white/80 backdrop-blur-sm p-2 rounded-l-lg shadow-lg border-y border-l border-gray-200 transition-transform duration-300 ${isOpen ? 'right-80' : 'right-0'}`}
-        aria-label={isOpen ? '關閉生成面板' : '開啟生成面板'}
+        className="absolute top-4 z-20 p-2.5 bg-white/90 backdrop-blur-md rounded-full shadow-xl border border-gray-200 hover:bg-gray-100 transition-all duration-300 ease-in-out"
+        style={{ right: isOpen ? 'calc(1rem + 20rem + 0.5rem)' : '1rem' }}
+        aria-label={isOpen ? t('closeGenerationPanel') || '關閉生成面板' : t('openGenerationPanel') || '開啟生成面板'}
       >
-        {isOpen ? '>' : '<'}
+        <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 text-gray-700 transition-transform ${isOpen ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
       </button>
 
       <div className={`absolute top-0 right-0 h-full z-20 p-4 bg-white/80 backdrop-blur-sm shadow-lg border-l border-gray-200 w-80 flex flex-col gap-4 transition-transform duration-300 ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}>
         <div>
-          <h1 className="text-xl font-bold text-gray-800">生成歷史</h1>
-          <p className="text-sm text-gray-600 mt-1">生成的圖片會顯示在這裡。</p>
+          <h1 className="text-xl font-bold text-gray-800">{t('generationHistory') || '生成歷史'}</h1>
+          <p className="text-sm text-gray-600 mt-1">{t('generationHistoryDesc') || '生成的圖片會顯示在這裡。'}</p>
         </div>
 
         <div className="flex-grow overflow-y-auto pr-2 -mr-2 space-y-4">
-          {isGenerating && <p>生成中...</p>}
+          {isGenerating && <p>{t('generating') || '生成中...'}</p>}
 
           {images.length === 0 && !isGenerating && (
-            <p>在畫布上選擇元素並點擊「生成」來建立圖片。</p>
+            <p>{t('generationHistoryEmpty') || '在畫布上選擇元素並點擊「生成」來建立圖片。'}</p>
           )}
 
           {images.map((imgSrc, index) => (
@@ -50,13 +55,13 @@ export const GenerationPanel: React.FC<GenerationPanelProps> = ({
                 onClick={() => onAddToCanvas(imgSrc)}
                 className="w-full mt-1 px-3 py-1.5 text-sm bg-green-600 text-white rounded-md hover:bg-green-700"
               >
-                新增至畫布
+                {t('addToCanvas') || '新增至畫布'}
               </button>
 
               <button
                 onClick={() => onDelete(index)}
                 className="absolute top-1 right-1 bg-black/50 text-white rounded-full w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
-                aria-label="刪除圖片"
+                aria-label={t('deleteImage') || '刪除圖片'}
               >
                 &times;
               </button>

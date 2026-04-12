@@ -24,10 +24,19 @@ export const COLORS = [
 
 const GRID_SIZE = 10;
 
+const MEMO_1_ZH = '[ 🍌 Nano Banana 無限畫布 Infinite Canvas 🍌 ]\n\n👑 原創作者 (Original Creator): @Prompt_case\nThreads: @Prompt_case | Patreon: www.patreon.com/MattTrendsPromptEngineering\nCopyright: Prompt_case | 版權所有\n\n🛠️ 二次創作與優化 (Second Mod): 述文老師學習網\n教學文章：https://harmonica80.blogspot.com/2025/12/ainano-banana-infinite-canvas-gemini-3.html\n\n✨ 三次修改版 (Current Version): 基於述文老師版本進階修改\n(加入 Gemini 3 聯網搜尋、UI 優化、網頁嵌入等新功能)';
+const MEMO_1_EN = '[ 🍌 Nano Banana Infinite Canvas 🍌 ]\n\n👑 Original Creator: @Prompt_case\nThreads: @Prompt_case | Patreon: www.patreon.com/MattTrendsPromptEngineering\nCopyright: Prompt_case | All Rights Reserved\n\n🛠️ Second Mod & Optimization: Shuwen Learning Web\nTutorial: https://harmonica80.blogspot.com/2025/12/ainano-banana-infinite-canvas-gemini-3.html\n\n✨ Current Version: Advanced modification based on Shuwen\'s version\n(Added Gemini 3 Search Grounding, UI Optimization, Webpage Embed, etc.)';
+
+const MEMO_2_ZH = '🕹️ CONTROL / 控制: \n\n● Pan / 平移:\n   Hold [SPACE] or [Middle Mouse Button]\n   按住 [空白鍵] 或 [滑鼠中鍵]\n\n● Zoom / 縮放: [SCROLL] / [滾輪]\n\n● Options / 選項: [Right-click] / [右鍵]';
+const MEMO_2_EN = '🕹️ CONTROL: \n\n● Pan:\n   Hold [SPACE] or [Middle Mouse Button]\n\n● Zoom: [SCROLL]\n\n● Options: [Right-click]';
+
+const MEMO_3_ZH = '⚡ Shortcut / 捷徑:\n\n● [Command+Z] for Undo / 復原\n\n● [Shift+Command+Z] for Redo / 重做\n\n● [Command+G] for Group / 群組';
+const MEMO_3_EN = '⚡ Shortcut:\n\n● [Command+Z] for Undo\n\n● [Shift+Command+Z] for Redo\n\n● [Command+G] for Group';
+
 const INITIAL_ELEMENTS: CanvasElement[] = [
-  { id: '1', type: 'note', position: { x: 20, y: -150 }, width: 550, height: 360, rotation: 0, zIndex: 1, content: '[ 🍌 Nano Banana 無限畫布 Infinite Canvas 🍌 ]\n\n👑 原創作者 (Original Creator): @Prompt_case\nThreads: @Prompt_case | Patreon: www.patreon.com/MattTrendsPromptEngineering\nCopyright: Prompt_case | 版權所有\n\n🛠️ 二次創作與優化 (Second Mod): 述文老師學習網\n教學文章：https://harmonica80.blogspot.com/2025/12/ainano-banana-infinite-canvas-gemini-3.html\n\n✨ 三次修改版 (Current Version): 基於述文老師版本進階修改\n(加入 Gemini 3 聯網搜尋、UI 優化、網頁嵌入等新功能)', color: 'bg-blue-600', textAlign: 'center' },
-  { id: '2', type: 'note', position: { x: 300, y: 220 }, width: 280, height: 320, rotation: -10, zIndex: 2, content: '🕹️ CONTROL / 控制: \n\n● Pan / 平移:\n   Hold [SPACE] or [Middle Mouse Button]\n   按住 [空白鍵] 或 [滑鼠中鍵]\n\n● Zoom / 縮放: [SCROLL] / [滾輪]\n\n● Options / 選項: [Right-click] / [右鍵]', color: 'bg-green-500' },
-  { id: '3', type: 'note', position: { x: -250, y: 220 }, width: 280, height: 200, rotation: 5, zIndex: 0, content: '⚡ Shortcut / 捷徑:\n\n● [Command+Z] for Undo / 復原\n\n● [Shift+Command+Z] for Redo / 重做\n\n● [Command+G] for Group / 群組', color: 'bg-yellow-500' },
+  { id: '1', type: 'note', position: { x: 20, y: -150 }, width: 550, height: 360, rotation: 0, zIndex: 1, content: MEMO_1_ZH, color: 'bg-blue-600', textAlign: 'center' },
+  { id: '2', type: 'note', position: { x: 300, y: 220 }, width: 280, height: 320, rotation: -10, zIndex: 2, content: MEMO_2_ZH, color: 'bg-green-500' },
+  { id: '3', type: 'note', position: { x: -250, y: 220 }, width: 280, height: 200, rotation: 5, zIndex: 0, content: MEMO_3_ZH, color: 'bg-yellow-500' },
 ];
 
 const translations: Record<string, Record<string, string>> = {
@@ -84,6 +93,8 @@ const translations: Record<string, Record<string, string>> = {
     optimizePrompt: 'Gemini 3 Optimize',
     aiPromptOptimization: 'Prompt Opt. & Analysis Text AI',
     customOpenAIAPI: 'Custom OpenAI API',
+    builtinAPIKey: 'Built-in API Key',
+    customGeminiAPIKey: 'Custom Gemini API Key',
     openAIAPI: 'OpenAI API',
     geminiFollowAPI: 'Gemini (Follow Image API)',
     googleSearch: 'Google Search',
@@ -91,6 +102,14 @@ const translations: Record<string, Record<string, string>> = {
     maxRefImages: 'Max 14 Reference Images:',
     flashRefLimit: 'Flash: 10 objects, 4 characters',
     proRefLimit: 'Pro: 6 objects, 5 characters',
+    generationHistory: 'Generation History',
+    generationHistoryDesc: 'Generated images will appear here.',
+    generating: 'Generating...',
+    generationHistoryEmpty: 'Select elements on the canvas and click "Generate" to create an image.',
+    closeGenerationPanel: 'Close Generation Panel',
+    openGenerationPanel: 'Open Generation Panel',
+    addToCanvas: 'Add to Canvas',
+    deleteImage: 'Delete Image',
     generationCount: 'Generation Count',
     addWebpage: 'Add Webpage',
     optimizing: 'Optimizing...',
@@ -220,6 +239,8 @@ const translations: Record<string, Record<string, string>> = {
     optimizePrompt: 'AI提示優化',
     aiPromptOptimization: '提示優化、分析等文字 AI',
     customOpenAIAPI: '自訂 OpenAI 相容 API',
+    builtinAPIKey: '內建 API Key',
+    customGeminiAPIKey: '自訂 Gemini API Key',
     openAIAPI: 'OpenAI 相容 API',
     geminiFollowAPI: 'Gemini (跟隨生圖 API 設定)',
     googleSearch: 'Google 搜尋',
@@ -227,6 +248,12 @@ const translations: Record<string, Record<string, string>> = {
     maxRefImages: '最多 14 張參考圖：',
     flashRefLimit: 'Flash: 10 個物件，4 個角色',
     proRefLimit: 'Pro: 6 個物件，5 個角色',
+    generationHistory: '生成歷史',
+    generationHistoryDesc: '生成的圖片會顯示在這裡。',
+    generating: '生成中...',
+    generationHistoryEmpty: '在畫布上選擇元素並點擊「生成」來建立圖片。',
+    closeGenerationPanel: '關閉生成面板',
+    openGenerationPanel: '開啟生成面板',
     generationCount: '生成數量',
     addWebpage: '新增網頁',
     optimizing: '優化中...',
@@ -440,6 +467,21 @@ const App: React.FC = () => {
   const toggleLanguage = useCallback(() => {
     setLanguage(prev => prev === 'en' ? 'zh' : 'en');
   }, []);
+
+  useEffect(() => {
+    setElements(prev => prev.map(el => {
+      if (el.id === '1' && el.type === 'note' && (el.content === MEMO_1_ZH || el.content === MEMO_1_EN)) {
+        return { ...el, content: language === 'en' ? MEMO_1_EN : MEMO_1_ZH };
+      }
+      if (el.id === '2' && el.type === 'note' && (el.content === MEMO_2_ZH || el.content === MEMO_2_EN)) {
+        return { ...el, content: language === 'en' ? MEMO_2_EN : MEMO_2_ZH };
+      }
+      if (el.id === '3' && el.type === 'note' && (el.content === MEMO_3_ZH || el.content === MEMO_3_EN)) {
+        return { ...el, content: language === 'en' ? MEMO_3_EN : MEMO_3_ZH };
+      }
+      return el;
+    }));
+  }, [language, setElements]);
 
   const getAi = useCallback(() => {
     if (apiProvider === 'custom_gemini') {
@@ -2334,8 +2376,8 @@ const App: React.FC = () => {
                 onChange={e => setApiProvider(e.target.value as any)} 
                 className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700 font-medium"
             >
-                <option value="builtin">內建 API Key</option>
-                <option value="custom_gemini">自訂 Gemini API Key</option>
+                <option value="builtin">{t('builtinAPIKey')}</option>
+                <option value="custom_gemini">{t('customGeminiAPIKey')}</option>
                 <option value="openai">{t('customOpenAIAPI')}</option>
             </select>
 
@@ -2710,6 +2752,7 @@ const App: React.FC = () => {
         images={generationHistory}
         onAddToCanvas={addGeneratedImageToCanvas}
         onDelete={handleDeleteGeneratedImage}
+        t={t}
       />
 
       {isUrlPromptOpen && (
