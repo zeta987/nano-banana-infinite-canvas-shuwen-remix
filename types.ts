@@ -46,16 +46,21 @@ export interface IFrameElement extends BaseElement {
   sourceMode: 'viewport' | 'fullpage';
 }
 
-export type CanvasElement = NoteElement | ImageElement | ArrowElement | DrawingElement | IFrameElement;
+export type CanvasElement =
+  | NoteElement
+  | ImageElement
+  | ArrowElement
+  | DrawingElement
+  | IFrameElement;
 
 export interface AnalysisContent {
-    description: string;
-    suggestions: string[];
+  description: string;
+  suggestions: string[];
 }
 
 export interface AnalysisResult {
-    en: AnalysisContent;
-    zh?: AnalysisContent;
+  en: AnalysisContent;
+  zh?: AnalysisContent;
 }
 
 declare global {
