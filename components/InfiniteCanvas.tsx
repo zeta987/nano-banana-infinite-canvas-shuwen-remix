@@ -175,8 +175,9 @@ interface InfiniteCanvasProps {
   onSetGenerationGoogleSearch: (val: boolean) => void;
   generationImageSearch: boolean;
   onSetGenerationImageSearch: (val: boolean) => void;
-  generationThinkingLevel: 'HIGH' | 'STANDARD' | 'NONE';
-  onSetGenerationThinkingLevel: (val: 'HIGH' | 'STANDARD' | 'NONE') => void;
+  generationThinkingLevel: 'HIGH' | 'LOW';
+  onSetGenerationThinkingLevel: (val: 'HIGH' | 'LOW') => void;
+  apiProvider: 'builtin' | 'custom_gemini' | 'openai';
   onUrlDrop?: (url: string, position: Point) => void;
 }
 
@@ -259,6 +260,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(({
   onSetGenerationImageSearch,
   generationThinkingLevel,
   onSetGenerationThinkingLevel,
+  apiProvider,
   onUrlDrop,
 }, ref) => {
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
@@ -1051,38 +1053,43 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(({
             <option value="4K">4K</option>
           </select>
 
-          <div className="flex flex-col gap-1 text-xs text-gray-700 bg-gray-50 p-2 rounded border border-gray-200">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input 
-                type="checkbox" 
-                checked={generationGoogleSearch}
-                onChange={e => onSetGenerationGoogleSearch(e.target.checked)}
-                className="rounded text-purple-600 focus:ring-purple-500"
-              />
-              Google Search
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input 
-                type="checkbox" 
-                checked={generationImageSearch}
-                onChange={e => onSetGenerationImageSearch(e.target.checked)}
-                className="rounded text-purple-600 focus:ring-purple-500"
-              />
-              Google Image Search
-            </label>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-gray-500">Thinking:</span>
-              <select
-                value={generationThinkingLevel}
-                onChange={e => onSetGenerationThinkingLevel(e.target.value as any)}
-                className="flex-1 px-1 py-0.5 text-xs bg-white text-gray-800 rounded border border-gray-300 focus:outline-none focus:ring-1 focus:ring-purple-500"
-              >
-                <option value="HIGH">HIGH</option>
-                <option value="STANDARD">STANDARD</option>
-                <option value="NONE">NONE</option>
-              </select>
+          {apiProvider !== 'openai' && (
+            <div className="flex flex-col gap-1 text-xs text-gray-700 bg-gray-50 p-2 rounded border border-gray-200">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={generationGoogleSearch}
+                  onChange={e => onSetGenerationGoogleSearch(e.target.checked)}
+                  className="rounded text-purple-600 focus:ring-purple-500"
+                />
+                {t('googleSearch')}
+              </label>
+              {generationModel === 'flash' && (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={generationImageSearch}
+                    onChange={e => onSetGenerationImageSearch(e.target.checked)}
+                    className="rounded text-purple-600 focus:ring-purple-500"
+                  />
+                  {t('googleImageSearch') || 'Google Image Search'}
+                </label>
+              )}
+              {generationModel === 'flash' && (
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-gray-500">Thinking:</span>
+                  <select
+                    value={generationThinkingLevel}
+                    onChange={e => onSetGenerationThinkingLevel(e.target.value as any)}
+                    className="flex-1 px-1 py-0.5 text-xs bg-white text-gray-800 rounded border border-gray-300 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  >
+                    <option value="HIGH">HIGH</option>
+                    <option value="LOW">LOW</option>
+                  </select>
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
           <button 
             onClick={handleGenerateClick}
@@ -1090,11 +1097,10 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(({
           >
               {t('generate')} ✨
           </button>
-          
           <div className="text-[10px] text-gray-500 leading-tight">
-            <span className="font-bold text-gray-600">Max 14 Reference Images:</span><br/>
-            Flash: 10 objects, 4 characters<br/>
-            Pro: 6 objects, 5 characters
+            <span className="font-bold text-gray-600">{t('maxRefImages') || 'Max 14 Reference Images:'}</span><br/>
+            {t('flashRefLimit') || 'Flash: 10 objects, 4 characters'}<br/>
+            {t('proRefLimit') || 'Pro: 6 objects, 5 characters'}
           </div>
         </div>
       )}

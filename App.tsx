@@ -82,11 +82,15 @@ const translations: Record<string, Record<string, string>> = {
     translate: 'Translate',
     translating: 'Translating...',
     optimizePrompt: 'Gemini 3 Optimize',
-    aiPromptOptimization: 'AI Prompt Optimization',
+    aiPromptOptimization: 'Prompt Opt. & Analysis Text AI',
     customOpenAIAPI: 'Custom OpenAI API',
     openAIAPI: 'OpenAI API',
     geminiFollowAPI: 'Gemini (Follow Image API)',
     googleSearch: 'Google Search',
+    googleImageSearch: 'Google Image Search',
+    maxRefImages: 'Max 14 Reference Images:',
+    flashRefLimit: 'Flash: 10 objects, 4 characters',
+    proRefLimit: 'Pro: 6 objects, 5 characters',
     generationCount: 'Generation Count',
     addWebpage: 'Add Webpage',
     optimizing: 'Optimizing...',
@@ -214,11 +218,15 @@ const translations: Record<string, Record<string, string>> = {
     translate: '翻譯',
     translating: '翻譯中...',
     optimizePrompt: 'AI提示優化',
-    aiPromptOptimization: 'AI提示優化',
+    aiPromptOptimization: '提示優化、分析等文字 AI',
     customOpenAIAPI: '自訂 OpenAI 相容 API',
     openAIAPI: 'OpenAI 相容 API',
     geminiFollowAPI: 'Gemini (跟隨生圖 API 設定)',
     googleSearch: 'Google 搜尋',
+    googleImageSearch: 'Google 圖片搜尋',
+    maxRefImages: '最多 14 張參考圖：',
+    flashRefLimit: 'Flash: 10 個物件，4 個角色',
+    proRefLimit: 'Pro: 6 個物件，5 個角色',
     generationCount: '生成數量',
     addWebpage: '新增網頁',
     optimizing: '優化中...',
@@ -374,12 +382,13 @@ const App: React.FC = () => {
   const [openaiApiKey, setOpenaiApiKey] = useState<string>('');
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState<string>('https://api.openai.com/v1');
   const [generationCount, setGenerationCount] = useState<number | string>(2);
-  const [generationGoogleSearch, setGenerationGoogleSearch] = useState(false);
-  const [generationImageSearch, setGenerationImageSearch] = useState(false);
-  const [generationThinkingLevel, setGenerationThinkingLevel] = useState<'HIGH' | 'STANDARD' | 'NONE'>('HIGH');
+  const [generationGoogleSearch, setGenerationGoogleSearch] = useState(true);
+  const [generationImageSearch, setGenerationImageSearch] = useState(true);
+  const [generationThinkingLevel, setGenerationThinkingLevel] = useState<'HIGH' | 'LOW'>('HIGH');
   
   const [optimizationProvider, setOptimizationProvider] = useState<'gemini' | 'openai'>('gemini');
   const [optimizationModel, setOptimizationModel] = useState<'flash' | 'pro'>('flash');
+  const [optimizationThinkingLevel, setOptimizationThinkingLevel] = useState<string>('high');
   const [optimizationOpenaiBaseUrl, setOptimizationOpenaiBaseUrl] = useState<string>('https://api.openai.com/v1');
   const [optimizationOpenaiApiKey, setOptimizationOpenaiApiKey] = useState<string>('');
   const [optimizationOpenaiModel, setOptimizationOpenaiModel] = useState<string>('gpt-4o');
@@ -388,6 +397,20 @@ const App: React.FC = () => {
   const [pendingImport, setPendingImport] = useState<PendingImportData | null>(null);
   const [aiErrorMessage, setAiErrorMessage] = useState<{ en: string; zh: string } | null>(null);
   const cancelGenerationRef = useRef(false);
+
+  useEffect(() => {
+    if (optimizationProvider === 'gemini') {
+        if (optimizationModel === 'pro' && ['minimal', 'none', 'xhigh'].includes(optimizationThinkingLevel)) {
+            setOptimizationThinkingLevel('high');
+        } else if (optimizationModel === 'flash' && ['none', 'xhigh'].includes(optimizationThinkingLevel)) {
+            setOptimizationThinkingLevel('high');
+        }
+    } else if (optimizationProvider === 'openai') {
+        if (['minimal'].includes(optimizationThinkingLevel)) {
+            setOptimizationThinkingLevel('high');
+        }
+    }
+  }, [optimizationProvider, optimizationModel, optimizationThinkingLevel]);
 
   useEffect(() => {
       if (generationModel === 'pro' && imageSize === '512') {
@@ -1077,16 +1100,18 @@ const App: React.FC = () => {
               responseModalities: [Modality.IMAGE, Modality.TEXT],
           };
           
-          if (generationThinkingLevel !== 'NONE') {
+          if (generationModel === 'flash') {
               config.thinkingConfig = {
                   thinkingLevel: generationThinkingLevel
               };
           }
 
-          if (generationGoogleSearch || generationImageSearch) {
+          if (generationGoogleSearch || (generationImageSearch && generationModel === 'flash')) {
               const searchTypes: any = {};
-              // If image search is enabled, we must specify it in searchTypes
-              if (generationImageSearch) {
+              if (generationGoogleSearch) {
+                  searchTypes.webSearch = {};
+              }
+              if (generationImageSearch && generationModel === 'flash') {
                   searchTypes.imageSearch = {};
               }
               
@@ -2050,7 +2075,7 @@ const App: React.FC = () => {
                             suggestions: { type: Type.ARRAY, items: { type: Type.STRING } }
                         }
                     },
-                    effort: "high"
+                    thinkingConfig: { thinkingLevel: optimizationThinkingLevel.toUpperCase() }
                 };
                 if (optimizationGrounding) {
                     config.tools = [{ googleSearch: {} }];
@@ -2082,7 +2107,7 @@ const App: React.FC = () => {
                     setAnalyzingElementId(null);
                     return;
                 }
-                const requestBody = {
+                const requestBody: any = {
                     model: optimizationOpenaiModel,
                     messages: [
                         {
@@ -2096,8 +2121,12 @@ const App: React.FC = () => {
                                 { type: "image_url", image_url: { url: element.src } }
                             ]
                         }
-                    ]
+                    ],
+                    response_format: { type: "json_object" }
                 };
+                if (optimizationThinkingLevel !== 'none') {
+                    requestBody.reasoning = { effort: optimizationThinkingLevel };
+                }
                 console.log("[API Request] OpenAI Analyze Image:", {
                     ...requestBody,
                     messages: requestBody.messages.map(m => m.role === 'user' ? {
@@ -2161,7 +2190,7 @@ const App: React.FC = () => {
                             suggestions: { type: Type.ARRAY, items: { type: Type.STRING } }
                         }
                     },
-                    effort: "high"
+                    thinkingConfig: { thinkingLevel: optimizationThinkingLevel.toUpperCase() }
                 };
                 if (optimizationGrounding) {
                     config.tools = [{ googleSearch: {} }];
@@ -2183,7 +2212,7 @@ const App: React.FC = () => {
                     setAnalyzingElementId(null);
                     return;
                 }
-                const requestBody = {
+                const requestBody: any = {
                     model: optimizationOpenaiModel,
                     messages: [
                         {
@@ -2194,8 +2223,12 @@ const App: React.FC = () => {
                             role: "user",
                             content: element.content
                         }
-                    ]
+                    ],
+                    response_format: { type: "json_object" }
                 };
+                if (optimizationThinkingLevel !== 'none') {
+                    requestBody.reasoning = { effort: optimizationThinkingLevel };
+                }
                 console.log("[API Request] OpenAI Optimize Note:", requestBody);
 
                 const response = await fetch(`${optimizationOpenaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
@@ -2369,6 +2402,40 @@ const App: React.FC = () => {
                 <option value="openai">{t('openAIAPI')}</option>
             </select>
 
+            <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs text-gray-500">Thinking:</span>
+                <select
+                    value={optimizationThinkingLevel}
+                    onChange={e => setOptimizationThinkingLevel(e.target.value)}
+                    className="flex-1 text-xs p-1 border rounded bg-white text-gray-700"
+                >
+                    {optimizationProvider === 'gemini' ? (
+                        optimizationModel === 'flash' ? (
+                            <>
+                                <option value="minimal">Minimal</option>
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                            </>
+                        ) : (
+                            <>
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                            </>
+                        )
+                    ) : (
+                        <>
+                            <option value="none">None</option>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="xhigh">XHigh</option>
+                        </>
+                    )}
+                </select>
+            </div>
+
             {optimizationProvider === 'gemini' ? (
                 <>
                     <div className="grid grid-cols-2 gap-1 p-1 bg-gray-200/50 rounded-md mb-2">
@@ -2385,15 +2452,6 @@ const App: React.FC = () => {
                             Gemini 3.1 Pro
                         </button>
                     </div>
-                    <label className="flex items-center gap-2 text-[10px] font-bold text-gray-700 cursor-pointer">
-                        <input 
-                            type="checkbox" 
-                            checked={optimizationGrounding} 
-                            onChange={(e) => setOptimizationGrounding(e.target.checked)}
-                            className="rounded text-blue-600 focus:ring-blue-500"
-                        />
-                        {t('googleSearch')}
-                    </label>
                 </>
             ) : (
                 <>
