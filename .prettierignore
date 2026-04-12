@@ -10,3 +10,6 @@ image/
 openspec/
 .playwright-mcp/
 *.png
+README*.md
+metadata.json
+tsconfig.json
