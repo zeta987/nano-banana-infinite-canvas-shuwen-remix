@@ -4,6 +4,10 @@
 
 这是一个结合无限画布、Gemini 3 影像生成、AI 提示词优化、网页嵌入与双语界面调整的可视化创作工具。
 
+![繁體中文首頁示意圖](https://github.com/user-attachments/assets/39f625f5-09ac-4848-b914-15d7c7fb48a8)
+
+![繁體中文功能示意圖](https://github.com/user-attachments/assets/8362b8b9-bafb-4b86-bd9f-51691d811b92)
+
 本项目建立在述文老师学习网的改编版之上，延续原作的操作概念，并加入这个 Remix 版本的功能扩充、界面调整与流程优化。
 
 ## 快速开始

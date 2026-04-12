@@ -4,9 +4,9 @@
 
 這是一個結合無限畫布、Gemini 3 影像生成、AI 提示詞最佳化、網頁嵌入與雙語介面調整的視覺化創作工具。
 
-![繁體中文首頁示意圖](images/zh-tw-home.jpg)
+![繁體中文首頁示意圖](https://github.com/user-attachments/assets/39f625f5-09ac-4848-b914-15d7c7fb48a8)
 
-![繁體中文功能示意圖](images/zh-tw-features.jpg)
+![繁體中文功能示意圖](https://github.com/user-attachments/assets/8362b8b9-bafb-4b86-bd9f-51691d811b92)
 
 本專案建立在述文老師學習網改編版之上，延續原作的操作概念，並加入這個 Remix 版本的功能擴充、介面調整與流程最佳化。
 
