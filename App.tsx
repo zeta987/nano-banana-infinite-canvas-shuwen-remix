@@ -1,21 +1,17 @@
 import React, {
   useState,
   useCallback,
+  useEffectEvent,
   useRef,
   useEffect,
   useMemo,
 } from 'react';
 import { GoogleGenAI, Modality, Type } from '@google/genai';
-import {
-  InfiniteCanvas,
-  CanvasApi,
-  ViewportData,
-} from './components/InfiniteCanvas';
+import { InfiniteCanvas, CanvasApi } from './components/InfiniteCanvas';
 import { ContextMenu } from './components/ContextMenu';
 import { DrawingModal } from './components/DrawingModal';
 import { ImageEditModal } from './components/ImageEditModal';
 import { CropModal } from './components/CropModal';
-import { Minimap } from './components/Minimap';
 import { GenerationPanel } from './components/GenerationPanel';
 import type {
   CanvasElement,
@@ -27,6 +23,7 @@ import type {
   ElementType,
   AnalysisResult,
   IFrameElement,
+  ElementUpdate,
 } from './types';
 import { useHistoryState } from './useHistoryState';
 
@@ -40,8 +37,6 @@ export const COLORS = [
   { name: 'Purple', bg: 'bg-purple-600', text: 'text-purple-600' },
   { name: 'Pink', bg: 'bg-pink-500', text: 'text-pink-500' },
 ];
-
-const GRID_SIZE = 10;
 
 const MEMO_1_ZH =
   '[ 🍌 Nano Banana 無限畫布 Infinite Canvas 🍌 ]\n\n👑 原創作者 (Original Creator): @Prompt_case\nThreads: @Prompt_case | Patreon: www.patreon.com/MattTrendsPromptEngineering\nCopyright: Prompt_case | 版權所有\n\n🛠️ 二次創作與優化 (Second Mod): 述文老師學習網\n教學文章：https://harmonica80.blogspot.com/2025/12/ainano-banana-infinite-canvas-gemini-3.html\n\n✨ 三次修改版 (Current Version): 基於述文老師版本進階修改\n(加入 Gemini 3 聯網搜尋、UI 優化、網頁嵌入等新功能)';
@@ -464,13 +459,6 @@ const App: React.FC = () => {
     string | null
   >(null);
   const [snapToGrid, setSnapToGrid] = useState(true);
-  const [viewport, setViewport] = useState<ViewportData>({
-    x: 0,
-    y: 0,
-    width: window.innerWidth,
-    height: window.innerHeight,
-    zoom: 1,
-  });
 
   const [usageStats, setUsageStats] = useState<UsageStats>({
     generatedImages: 0,
@@ -558,7 +546,6 @@ const App: React.FC = () => {
   const lastImagePosition = useRef<Point | null>(null);
   const zIndexCounter = useRef(INITIAL_ELEMENTS.length);
   const dragCounter = useRef(0);
-  const dragStartPositionsRef = useRef<Record<string, Point> | null>(null);
   const lastWorldMousePosition = useRef<Point | null>(null);
 
   const ai = useRef<GoogleGenAI | null>(null);
@@ -748,15 +735,6 @@ const App: React.FC = () => {
   const handleCanvasMouseMove = (worldPoint: Point) => {
     lastWorldMousePosition.current = worldPoint;
   };
-
-  const handleViewportChange = useCallback((newViewport: ViewportData) => {
-    setViewport(newViewport);
-  }, []);
-
-  const handleZoomIn = () => canvasApiRef.current?.zoomIn();
-  const handleZoomOut = () => canvasApiRef.current?.zoomOut();
-  const handlePanTo = (worldPoint: Point) =>
-    canvasApiRef.current?.panTo(worldPoint);
 
   const addElement = useCallback(
     (
@@ -1674,86 +1652,15 @@ const App: React.FC = () => {
     [],
   );
 
-  const updateElements = useCallback(
-    (updatedElement: CanvasElement, dragDelta?: Point) => {
-      setElements(
-        (prevElements) => {
-          const snap = (v: number) =>
-            snapToGrid ? Math.round(v / GRID_SIZE) * GRID_SIZE : v;
-
-          if (
-            dragDelta &&
-            selectedElementIds.length > 1 &&
-            selectedElementIds.includes(updatedElement.id)
-          ) {
-            // Capture start positions on first drag frame (dragDelta is now cumulative)
-            if (!dragStartPositionsRef.current) {
-              const startPos: Record<string, Point> = {};
-              const selectedSet = new Set(selectedElementIds);
-              prevElements.forEach((el) => {
-                if (selectedSet.has(el.id)) {
-                  startPos[el.id] = { x: el.position.x, y: el.position.y };
-                }
-              });
-              dragStartPositionsRef.current = startPos;
-            }
-
-            const startPositions = dragStartPositionsRef.current;
-            const selectedSet = new Set(selectedElementIds);
-
-            return prevElements.map((el) => {
-              if (!selectedSet.has(el.id)) return el;
-
-              const startPos = startPositions[el.id];
-              if (!startPos) return el;
-
-              const newX = snap(startPos.x + dragDelta.x);
-              const newY = snap(startPos.y + dragDelta.y);
-
-              if (el.id === updatedElement.id) {
-                // Dragged element: preserve updated properties (e.g., arrow start/end)
-                return {
-                  ...updatedElement,
-                  position: { x: newX, y: newY },
-                } as CanvasElement;
-              }
-
-              // Companion elements: absolute position from frozen start + cumulative delta
-              return { ...el, position: { x: newX, y: newY } } as CanvasElement;
-            });
-          } else {
-            return prevElements.map((el) => {
-              if (el.id === updatedElement.id) {
-                const snappedX = snap(updatedElement.position.x);
-                const snappedY = snap(updatedElement.position.y);
-                return {
-                  ...updatedElement,
-                  position: { x: snappedX, y: snappedY },
-                } as CanvasElement;
-              }
-              return el;
-            });
-          }
-        },
-        { addToHistory: false },
-      );
-    },
-    [selectedElementIds, setElements, snapToGrid],
-  );
-
-  const updateMultipleElements = useCallback(
-    (
-      updates: (Partial<CanvasElement> & { id: string })[],
-      addToHistory: boolean = false,
-    ) => {
-      const updatesMap = new Map(updates.map((u) => [u.id, u]));
+  const applyElementUpdates = useCallback(
+    (updates: ElementUpdate[], addToHistory: boolean = false) => {
+      const updatesMap = new Map(updates.map((update) => [update.id, update]));
       setElements(
         (prev) =>
-          prev.map((el) => {
-            if (updatesMap.has(el.id)) {
-              return { ...el, ...updatesMap.get(el.id) } as CanvasElement;
-            }
-            return el;
+          prev.map((element) => {
+            const update = updatesMap.get(element.id);
+            if (!update) return element;
+            return { ...element, ...update } as CanvasElement;
           }),
         { addToHistory },
       );
@@ -1761,10 +1668,26 @@ const App: React.FC = () => {
     [setElements],
   );
 
-  const handleInteractionEnd = useCallback(() => {
-    dragStartPositionsRef.current = null;
-    setElements((currentElements) => currentElements, { addToHistory: true });
-  }, [setElements]);
+  const updateElement = useCallback(
+    (updatedElement: CanvasElement) => {
+      applyElementUpdates([updatedElement], false);
+    },
+    [applyElementUpdates],
+  );
+
+  const commitElementUpdates = useCallback(
+    (updates: ElementUpdate[]) => {
+      applyElementUpdates(updates, true);
+    },
+    [applyElementUpdates],
+  );
+
+  const updateMultipleElements = useCallback(
+    (updates: ElementUpdate[], addToHistory: boolean = false) => {
+      applyElementUpdates(updates, addToHistory);
+    },
+    [applyElementUpdates],
+  );
 
   const deleteElement = useCallback(() => {
     if (selectedElementIds.length === 0) return;
@@ -2036,57 +1959,51 @@ const App: React.FC = () => {
     updateMultipleElements(updates, true);
   }, [elements, selectedElementIds, updateMultipleElements]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (editingDrawing || editingImage || croppingImage || outpaintingState) {
-        return;
-      }
+  const handleGlobalKeyDown = useEffectEvent((e: KeyboardEvent) => {
+    if (editingDrawing || editingImage || croppingImage || outpaintingState) {
+      return;
+    }
 
-      const target = e.target as HTMLElement;
-      const isEditingText =
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable;
+    const target = e.target as HTMLElement;
+    const isEditingText =
+      target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.isContentEditable;
 
-      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-      const isCtrlOrCmd = isMac ? e.metaKey : e.ctrlKey;
+    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    const isCtrlOrCmd = isMac ? e.metaKey : e.ctrlKey;
 
-      if ((e.key === 'Delete' || e.key === 'Backspace') && !isEditingText) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !isEditingText) {
+      e.preventDefault();
+      deleteElement();
+      return;
+    }
+
+    if (isCtrlOrCmd && !isEditingText) {
+      if (e.key.toLowerCase() === 'z') {
         e.preventDefault();
-        deleteElement();
-        return;
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        redo();
+      } else if (e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        if (e.shiftKey) ungroupElements();
+        else groupElements();
       }
+    }
+  });
 
-      if (isCtrlOrCmd && !isEditingText) {
-        if (e.key.toLowerCase() === 'z') {
-          e.preventDefault();
-          if (e.shiftKey) redo();
-          else undo();
-        } else if (e.key.toLowerCase() === 'y') {
-          e.preventDefault();
-          redo();
-        } else if (e.key.toLowerCase() === 'g') {
-          e.preventDefault();
-          if (e.shiftKey) ungroupElements();
-          else groupElements();
-        }
-      }
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => {
+      handleGlobalKeyDown(event);
     };
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', listener);
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keydown', listener);
     };
-  }, [
-    deleteElement,
-    undo,
-    redo,
-    editingDrawing,
-    editingImage,
-    croppingImage,
-    outpaintingState,
-    groupElements,
-    ungroupElements,
-  ]);
+  }, []);
 
   useEffect(() => {
     const preventDefaults = (e: DragEvent) => {
@@ -2699,50 +2616,53 @@ const App: React.FC = () => {
     [elements, addElement],
   );
 
-  useEffect(() => {
-    const handlePaste = async (event: ClipboardEvent) => {
-      const target = event.target as HTMLElement;
-      const isEditingText =
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable;
-      if (isEditingText) return;
+  const handleWindowPaste = useEffectEvent(async (event: ClipboardEvent) => {
+    const target = event.target as HTMLElement;
+    const isEditingText =
+      target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.isContentEditable;
+    if (isEditingText) return;
 
-      event.preventDefault();
-      const items = event.clipboardData?.items;
-      if (!items) return;
+    event.preventDefault();
+    const items = event.clipboardData?.items;
+    if (!items) return;
 
-      const position = getTargetPosition();
-      const imageItem = Array.from(items).find((item) =>
-        item.type.startsWith('image/'),
-      );
-      if (imageItem) {
-        const file = imageItem.getAsFile();
-        if (file) addImagesToCanvas([file], position);
-        return;
-      }
+    const position = getTargetPosition();
+    const imageItem = Array.from(items).find((item) =>
+      item.type.startsWith('image/'),
+    );
+    if (imageItem) {
+      const file = imageItem.getAsFile();
+      if (file) addImagesToCanvas([file], position);
+      return;
+    }
 
-      const textItem = Array.from(items).find(
-        (item) => item.type === 'text/plain',
-      );
-      if (textItem) {
-        textItem.getAsString((text) => {
-          addElement({
-            type: 'note',
-            position,
-            width: 200,
-            height: 150,
-            rotation: 0,
-            content: text,
-            color: COLORS[Math.floor(Math.random() * COLORS.length)].bg,
-          });
+    const textItem = Array.from(items).find(
+      (item) => item.type === 'text/plain',
+    );
+    if (textItem) {
+      textItem.getAsString((text) => {
+        addElement({
+          type: 'note',
+          position,
+          width: 200,
+          height: 150,
+          rotation: 0,
+          content: text,
+          color: COLORS[Math.floor(Math.random() * COLORS.length)].bg,
         });
-      }
-    };
+      });
+    }
+  });
 
-    window.addEventListener('paste', handlePaste);
-    return () => window.removeEventListener('paste', handlePaste);
-  }, [addElement, addImagesToCanvas, getTargetPosition]);
+  useEffect(() => {
+    const listener = (event: ClipboardEvent) => {
+      void handleWindowPaste(event);
+    };
+    window.addEventListener('paste', listener);
+    return () => window.removeEventListener('paste', listener);
+  }, []);
 
   const handleAnalyzeElement = useCallback(
     async (elementId: string) => {
@@ -3861,15 +3781,13 @@ const App: React.FC = () => {
         selectedElementIds={selectedElementIds}
         onSelectElement={handleSelectElement}
         onMarqueeSelect={handleMarqueeSelect}
-        onUpdateElement={updateElements}
-        onUpdateMultipleElements={updateMultipleElements}
-        onInteractionEnd={handleInteractionEnd}
+        onUpdateElement={updateElement}
+        onCommitElementUpdates={commitElementUpdates}
         setResetViewCallback={getResetViewCallback}
         onGenerate={handleGenerate}
         onContextMenu={handleContextMenu}
         onEditDrawing={handleEditDrawing}
         onMouseMove={handleCanvasMouseMove}
-        onViewportChange={handleViewportChange}
         imageStyle={imageStyle}
         onSetImageStyle={setImageStyle}
         imageAspectRatio={imageAspectRatio}
@@ -3900,6 +3818,8 @@ const App: React.FC = () => {
         onSetGenerationImageSearch={setGenerationImageSearch}
         generationThinkingLevel={generationThinkingLevel}
         onSetGenerationThinkingLevel={setGenerationThinkingLevel}
+        usageStats={usageStats}
+        snapToGrid={snapToGrid}
         onUrlDrop={addIFrame}
       />
 
@@ -3951,16 +3871,6 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
-
-      <Minimap
-        elements={elements}
-        viewport={viewport}
-        onPanTo={handlePanTo}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        usageStats={usageStats}
-        t={t}
-      />
 
       {isGenerating && (
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] bg-white/90 backdrop-blur-md border border-gray-200 rounded-2xl shadow-2xl p-4 flex items-center gap-4 animate-in fade-in slide-in-from-bottom-4 duration-300">

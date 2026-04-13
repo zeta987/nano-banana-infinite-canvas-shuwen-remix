@@ -10,10 +10,12 @@ import React, {
 import type {
   Point,
   CanvasElement,
-  ImageElement,
   AnalysisResult,
+  ElementUpdate,
 } from '../types';
-import type { OutpaintingState } from '../App';
+import type { OutpaintingState, UsageStats } from '../App';
+import { buildInteractionPreviewElements } from './infiniteCanvasDragUtils';
+import { Minimap } from './Minimap';
 import { TransformableElement } from './TransformableElement';
 
 interface OutpaintingFrameProps {
@@ -167,11 +169,8 @@ interface InfiniteCanvasProps {
   selectedElementIds: string[];
   onSelectElement: (id: string | null, shiftKey: boolean) => void;
   onMarqueeSelect: (ids: string[], shiftKey: boolean) => void;
-  onUpdateElement: (element: CanvasElement, dragDelta?: Point) => void;
-  onUpdateMultipleElements: (
-    updates: (Partial<CanvasElement> & { id: string })[],
-  ) => void;
-  onInteractionEnd: () => void;
+  onUpdateElement: (element: CanvasElement) => void;
+  onCommitElementUpdates: (updates: ElementUpdate[]) => void;
   setResetViewCallback: (callback: () => void) => void;
   onGenerate: (selectedElements: CanvasElement[]) => void;
   onContextMenu: (
@@ -181,7 +180,6 @@ interface InfiniteCanvasProps {
   ) => void;
   onEditDrawing: (elementId: string) => void;
   onMouseMove: (worldPoint: Point) => void;
-  onViewportChange: (viewport: ViewportData) => void;
   imageStyle: string;
   onSetImageStyle: (style: string) => void;
   imageAspectRatio: string;
@@ -217,6 +215,8 @@ interface InfiniteCanvasProps {
   generationThinkingLevel: 'HIGH' | 'LOW';
   onSetGenerationThinkingLevel: (val: 'HIGH' | 'LOW') => void;
   apiProvider: 'builtin' | 'custom_gemini' | 'openai';
+  usageStats: UsageStats;
+  snapToGrid: boolean;
   onUrlDrop?: (url: string, position: Point) => void;
 }
 
@@ -244,6 +244,8 @@ export interface CanvasApi {
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 5;
+const GRID_SIZE = 10;
+const MINIMAP_REFRESH_MS = 100;
 
 type GroupInteraction = {
   type: 'group-resize' | 'group-rotate';
@@ -254,6 +256,57 @@ type GroupInteraction = {
   startAngle?: number;
 } | null;
 
+const arePointsEqual = (a: Point, b: Point) => a.x === b.x && a.y === b.y;
+
+const areElementsEqual = (a: CanvasElement, b: CanvasElement) => {
+  if (
+    a.id !== b.id ||
+    a.type !== b.type ||
+    a.width !== b.width ||
+    a.height !== b.height ||
+    a.rotation !== b.rotation ||
+    a.zIndex !== b.zIndex ||
+    a.groupId !== b.groupId ||
+    !arePointsEqual(a.position, b.position)
+  ) {
+    return false;
+  }
+
+  if (a.type === 'note' && b.type === 'note') {
+    return (
+      a.content === b.content &&
+      a.color === b.color &&
+      a.textAlign === b.textAlign
+    );
+  }
+
+  if (a.type === 'image' && b.type === 'image') {
+    return a.src === b.src;
+  }
+
+  if (a.type === 'drawing' && b.type === 'drawing') {
+    return a.src === b.src;
+  }
+
+  if (a.type === 'arrow' && b.type === 'arrow') {
+    return (
+      a.color === b.color &&
+      arePointsEqual(a.start, b.start) &&
+      arePointsEqual(a.end, b.end)
+    );
+  }
+
+  if (a.type === 'iframe' && b.type === 'iframe') {
+    return (
+      a.url === b.url &&
+      a.isActivated === b.isActivated &&
+      a.sourceMode === b.sourceMode
+    );
+  }
+
+  return false;
+};
+
 export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
   (
     {
@@ -262,14 +315,12 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
       onSelectElement,
       onMarqueeSelect,
       onUpdateElement,
-      onUpdateMultipleElements,
-      onInteractionEnd,
+      onCommitElementUpdates,
       setResetViewCallback,
       onGenerate,
       onContextMenu,
       onEditDrawing,
       onMouseMove,
-      onViewportChange,
       imageStyle,
       onSetImageStyle,
       imageAspectRatio,
@@ -301,6 +352,8 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
       generationThinkingLevel,
       onSetGenerationThinkingLevel,
       apiProvider,
+      usageStats,
+      snapToGrid,
       onUrlDrop,
     },
     ref,
@@ -318,6 +371,10 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
 
     const canvasRef = useRef<HTMLDivElement>(null);
     const marqueeRectRef = useRef<MarqueeRect | null>(null);
+    const previewElementsRef = useRef<Map<string, CanvasElement>>(new Map());
+    const previewRenderFrameRef = useRef<number | null>(null);
+    const minimapRefreshTimeoutRef = useRef<number | null>(null);
+    const minimapElementsRef = useRef<CanvasElement[]>(elements);
 
     const touchStateRef = useRef<{
       lastTouches: React.Touch[] | null;
@@ -332,6 +389,9 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
       longPressTimeout: null,
       isMarquee: false,
     });
+
+    const [previewVersion, setPreviewVersion] = useState(0);
+    const [minimapVersion, setMinimapVersion] = useState(0);
 
     const screenToWorld = useCallback(
       (screenPoint: Point): Point => {
@@ -387,6 +447,97 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
       [zoom],
     );
 
+    const selectedElementIdSet = useMemo(
+      () => new Set(selectedElementIds),
+      [selectedElementIds],
+    );
+
+    const elementsById = useMemo(
+      () => new Map(elements.map((element) => [element.id, element])),
+      [elements],
+    );
+
+    const buildDisplayElements = useCallback(
+      (sourceElements: CanvasElement[]) => {
+        return sourceElements.map(
+          (element) => previewElementsRef.current.get(element.id) ?? element,
+        );
+      },
+      [],
+    );
+
+    const schedulePreviewRender = useCallback(() => {
+      if (previewRenderFrameRef.current !== null) return;
+
+      previewRenderFrameRef.current = window.requestAnimationFrame(() => {
+        previewRenderFrameRef.current = null;
+        setPreviewVersion((version) => version + 1);
+      });
+    }, []);
+
+    const refreshMinimapSnapshot = useCallback(
+      (sourceElements: CanvasElement[]) => {
+        minimapElementsRef.current = buildDisplayElements(sourceElements);
+        setMinimapVersion((version) => version + 1);
+      },
+      [buildDisplayElements],
+    );
+
+    const scheduleMinimapRefresh = useCallback(
+      (sourceElements: CanvasElement[]) => {
+        if (minimapRefreshTimeoutRef.current !== null) return;
+
+        minimapRefreshTimeoutRef.current = window.setTimeout(() => {
+          minimapRefreshTimeoutRef.current = null;
+          refreshMinimapSnapshot(sourceElements);
+        }, MINIMAP_REFRESH_MS);
+      },
+      [refreshMinimapSnapshot],
+    );
+
+    const applyPreviewElements = useCallback(
+      (nextElements: CanvasElement[]) => {
+        previewElementsRef.current.clear();
+        nextElements.forEach((element) => {
+          previewElementsRef.current.set(element.id, element);
+        });
+        schedulePreviewRender();
+        scheduleMinimapRefresh(elements);
+      },
+      [elements, scheduleMinimapRefresh, schedulePreviewRender],
+    );
+
+    const applyPreviewUpdates = useCallback(
+      (updates: ElementUpdate[]) => {
+        const nextElements: CanvasElement[] = [];
+
+        updates.forEach((update) => {
+          const baseElement =
+            previewElementsRef.current.get(update.id) ??
+            elementsById.get(update.id);
+          if (!baseElement) return;
+          nextElements.push({ ...baseElement, ...update } as CanvasElement);
+        });
+
+        if (nextElements.length === 0) return;
+        applyPreviewElements(nextElements);
+      },
+      [applyPreviewElements, elementsById],
+    );
+
+    const commitPreviewElements = useCallback(() => {
+      const updates = Array.from(previewElementsRef.current.values());
+      if (updates.length === 0) return;
+
+      if (minimapRefreshTimeoutRef.current !== null) {
+        window.clearTimeout(minimapRefreshTimeoutRef.current);
+        minimapRefreshTimeoutRef.current = null;
+      }
+
+      refreshMinimapSnapshot(elements);
+      onCommitElementUpdates(updates);
+    }, [elements, onCommitElementUpdates, refreshMinimapSnapshot]);
+
     useImperativeHandle(
       ref,
       () => ({
@@ -405,22 +556,37 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
     }, [outpaintingState]);
 
     useEffect(() => {
-      if (onViewportChange && canvasRef.current) {
-        const { clientWidth, clientHeight } = canvasRef.current;
-        const worldTopLeft = screenToWorld({ x: 0, y: 0 });
-        const worldBottomRight = screenToWorld({
-          x: clientWidth,
-          y: clientHeight,
-        });
-        onViewportChange({
-          x: worldTopLeft.x,
-          y: worldTopLeft.y,
-          width: worldBottomRight.x - worldTopLeft.x,
-          height: worldBottomRight.y - worldTopLeft.y,
-          zoom: zoom,
-        });
-      }
-    }, [pan, zoom, screenToWorld, onViewportChange]);
+      if (previewElementsRef.current.size === 0) return;
+
+      const previewElements: CanvasElement[] = Array.from(
+        previewElementsRef.current.values(),
+      );
+      const isCommitted = previewElements.every((previewElement) => {
+        const committedElement = elementsById.get(previewElement.id);
+        return committedElement
+          ? areElementsEqual(committedElement, previewElement)
+          : false;
+      });
+
+      if (!isCommitted) return;
+
+      previewElementsRef.current.clear();
+      minimapElementsRef.current = elements;
+      setPreviewVersion((version) => version + 1);
+      setMinimapVersion((version) => version + 1);
+    }, [elements, elementsById]);
+
+    useEffect(() => {
+      return () => {
+        if (previewRenderFrameRef.current !== null) {
+          window.cancelAnimationFrame(previewRenderFrameRef.current);
+        }
+
+        if (minimapRefreshTimeoutRef.current !== null) {
+          window.clearTimeout(minimapRefreshTimeoutRef.current);
+        }
+      };
+    }, []);
 
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
@@ -520,10 +686,10 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
         }
         if (groupInteraction) {
           setGroupInteraction(null);
-          onInteractionEnd();
+          commitPreviewElements();
         }
       },
-      [performMarqueeSelection, groupInteraction, onInteractionEnd],
+      [commitPreviewElements, performMarqueeSelection, groupInteraction],
     );
 
     const handleMouseMove = useCallback(
@@ -578,7 +744,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
                 rotation: el.rotation + angleDiff * (180 / Math.PI),
               };
             });
-            onUpdateMultipleElements(updates);
+            applyPreviewUpdates(updates);
           } else if (type === 'group-resize') {
             const dx = (currentPoint.x - startPoint.x) / zoom;
             const dy = (currentPoint.y - startPoint.y) / zoom;
@@ -618,7 +784,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
                 position: newPosition,
               };
             });
-            onUpdateMultipleElements(updates);
+            applyPreviewUpdates(updates);
           }
         }
       },
@@ -626,7 +792,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
         isPanning,
         startPan,
         groupInteraction,
-        onUpdateMultipleElements,
+        applyPreviewUpdates,
         zoom,
         pan,
         onMouseMove,
@@ -850,7 +1016,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
 
         if (groupInteraction) {
           setGroupInteraction(null);
-          onInteractionEnd();
+          commitPreviewElements();
         }
 
         touchStateRef.current.lastTouches =
@@ -863,7 +1029,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
         onSelectElement,
         performMarqueeSelection,
         groupInteraction,
-        onInteractionEnd,
+        commitPreviewElements,
       ],
     );
 
@@ -923,9 +1089,40 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
       }));
     };
 
+    const sortedElements = useMemo(
+      () => [...elements].sort((a, b) => a.zIndex - b.zIndex),
+      [elements],
+    );
+
+    const displayElements = useMemo(
+      () => buildDisplayElements(sortedElements),
+      [buildDisplayElements, previewVersion, sortedElements],
+    );
+
+    const minimapElements = useMemo(
+      () =>
+        previewElementsRef.current.size > 0
+          ? minimapElementsRef.current
+          : displayElements,
+      [displayElements, minimapVersion],
+    );
+
+    const viewport = useMemo<ViewportData>(() => {
+      const canvas = canvasRef.current;
+      const width = canvas?.clientWidth ?? window.innerWidth;
+      const height = canvas?.clientHeight ?? window.innerHeight;
+      return {
+        x: -pan.x / zoom,
+        y: -pan.y / zoom,
+        width: width / zoom,
+        height: height / zoom,
+        zoom,
+      };
+    }, [pan, zoom]);
+
     const selectionBbox = useMemo((): BoundingBox | null => {
-      const selectedElements = elements.filter((el) =>
-        selectedElementIds.includes(el.id),
+      const selectedElements = displayElements.filter((element) =>
+        selectedElementIdSet.has(element.id),
       );
       if (selectedElements.length === 0) return null;
 
@@ -954,7 +1151,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
         height: maxY - minY,
         rotation: 0,
       };
-    }, [elements, selectedElementIds]);
+    }, [displayElements, selectedElementIdSet]);
 
     const handleGroupInteractionStart = useCallback(
       (
@@ -973,8 +1170,8 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
           x: (selectionBbox.minX + selectionBbox.maxX) / 2,
           y: (selectionBbox.minY + selectionBbox.maxY) / 2,
         };
-        const startElements = elements.filter((el) =>
-          selectedElementIds.includes(el.id),
+        const startElements = displayElements.filter((element) =>
+          selectedElementIdSet.has(element.id),
         );
 
         const interactionDetails: GroupInteraction = {
@@ -998,19 +1195,79 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
 
         setGroupInteraction(interactionDetails);
       },
-      [selectionBbox, elements, selectedElementIds, zoom, pan],
+      [selectionBbox, displayElements, selectedElementIdSet, zoom, pan],
     );
 
     const handleGenerateClick = useCallback(() => {
-      const selectedElements = elements.filter((el) =>
-        selectedElementIds.includes(el.id),
+      const selectedElements = displayElements.filter((element) =>
+        selectedElementIdSet.has(element.id),
       );
       if (selectedElements.length > 0) {
         onGenerate(selectedElements);
       }
-    }, [elements, selectedElementIds, onGenerate]);
+    }, [displayElements, selectedElementIdSet, onGenerate]);
 
-    const sortedElements = [...elements].sort((a, b) => a.zIndex - b.zIndex);
+    const handleElementUpdate = useCallback(
+      (
+        updatedElement: CanvasElement,
+        metadata?: {
+          interactionType?:
+            | 'drag'
+            | 'resize'
+            | 'rotate'
+            | 'resize-arrow-start'
+            | 'resize-arrow-end';
+          dragDelta?: Point;
+        },
+      ) => {
+        if (!metadata?.interactionType) {
+          onUpdateElement(updatedElement);
+          return;
+        }
+
+        applyPreviewElements(
+          buildInteractionPreviewElements({
+            elements,
+            updatedElement,
+            metadata,
+            selectedElementIds,
+            snapToGrid,
+            gridSize: GRID_SIZE,
+          }),
+        );
+      },
+      [
+        onUpdateElement,
+        elements,
+        applyPreviewElements,
+        selectedElementIds,
+        snapToGrid,
+      ],
+    );
+
+    const handleElementInteractionEnd = useCallback(() => {
+      commitPreviewElements();
+    }, [commitPreviewElements]);
+
+    const handleCanvasContextMenu = useCallback(
+      (e: React.MouseEvent) => {
+        const worldPoint = screenToWorld({ x: e.clientX, y: e.clientY });
+        onContextMenu(e, worldPoint, null);
+      },
+      [onContextMenu, screenToWorld],
+    );
+
+    const handleElementContextMenu = useCallback(
+      (e: React.MouseEvent | React.TouchEvent, elementId: string) => {
+        const point = 'touches' in e ? e.touches[0] : e;
+        const worldPoint = screenToWorld({
+          x: point.clientX,
+          y: point.clientY,
+        });
+        onContextMenu(e, worldPoint, elementId);
+      },
+      [onContextMenu, screenToWorld],
+    );
 
     let cursorClass = 'cursor-default';
     if (isPanning) {
@@ -1022,11 +1279,6 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
     } else if (interactionMode === 'select' && !touchStateRef.current.didMove) {
       cursorClass = 'cursor-crosshair';
     }
-
-    const handleCanvasContextMenu = (e: React.MouseEvent) => {
-      const worldPoint = screenToWorld({ x: e.clientX, y: e.clientY });
-      onContextMenu(e, worldPoint, null);
-    };
 
     const IMAGE_STYLES = [
       { value: 'Default', label: 'Default (預設)' },
@@ -1086,6 +1338,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
 
     return (
       <div
+        data-testid="canvas-root"
         ref={canvasRef}
         className={`w-full h-full overflow-hidden bg-gray-50 
         bg-[radial-gradient(#d1d5db_1px,transparent_1px)] [background-size:24px_24px]
@@ -1121,37 +1374,30 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
             transformOrigin: '0 0',
           }}
         >
-          {sortedElements.map((el) => (
+          {displayElements.map((el) => (
             <TransformableElement
               key={el.id}
               element={el}
               zoom={zoom}
-              isSelected={selectedElementIds.includes(el.id)}
+              isSelected={selectedElementIdSet.has(el.id)}
               isMultiSelect={selectedElementIds.length > 1}
               isOutpainting={outpaintingState?.element.id === el.id}
               onSelect={onSelectElement}
-              onUpdate={onUpdateElement}
-              onInteractionEnd={onInteractionEnd}
-              onContextMenu={(e, elementId) => {
-                const point = 'touches' in e ? e.touches[0] : e;
-                const worldPoint = screenToWorld({
-                  x: point.clientX,
-                  y: point.clientY,
-                });
-                onContextMenu(e, worldPoint, elementId);
-              }}
+              onUpdate={handleElementUpdate}
+              onInteractionEnd={handleElementInteractionEnd}
+              onContextMenu={handleElementContextMenu}
               onEditDrawing={onEditDrawing}
               t={t}
               language={language}
-              analysisResults={analysisResults}
-              analyzingElementId={analyzingElementId}
+              analysis={analysisResults[el.id]}
+              isAnalysisVisible={Boolean(analysisVisibility[el.id])}
+              isAnalyzing={analyzingElementId === el.id}
               onAnalyzeElement={onAnalyzeElement}
               onOptimizeNotePrompt={onOptimizeNotePrompt}
-              analysisVisibility={analysisVisibility}
               onToggleAnalysisVisibility={onToggleAnalysisVisibility}
               onClearAnalysis={onClearAnalysis}
               onTranslateAnalysis={onTranslateAnalysis}
-              translatingElementId={translatingElementId}
+              isTranslating={translatingElementId === el.id}
             />
           ))}
           {selectionBbox && (
@@ -1433,6 +1679,16 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
             }}
           />
         )}
+
+        <Minimap
+          elements={minimapElements}
+          viewport={viewport}
+          onPanTo={panTo}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          usageStats={usageStats}
+          t={t}
+        />
       </div>
     );
   },

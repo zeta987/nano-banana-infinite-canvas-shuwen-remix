@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { memo, useState, useRef, useEffect, useCallback } from 'react';
 import type { CanvasElement, Point } from '../types';
 import type { ViewportData } from './InfiniteCanvas';
 import type { UsageStats } from '../App';
@@ -17,7 +17,7 @@ const MINIMAP_WIDTH = 200;
 const MINIMAP_HEIGHT = 150;
 const MINIMAP_ZOOM_FACTOR = 0.05; // 小地圖相對於主畫布的縮放比例
 
-export const Minimap: React.FC<MinimapProps> = ({
+const MinimapComponent: React.FC<MinimapProps> = ({
   elements,
   viewport,
   onPanTo,
@@ -29,6 +29,7 @@ export const Minimap: React.FC<MinimapProps> = ({
   const [isCollapsed, setIsCollapsed] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDraggingRef = useRef(false);
+  const drawFrameRef = useRef<number | null>(null);
   const [dragStartViewport, setDragStartViewport] =
     useState<ViewportData | null>(null);
 
@@ -56,56 +57,60 @@ export const Minimap: React.FC<MinimapProps> = ({
     const canvas = canvasRef.current;
     if (!canvas || isCollapsed) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    drawFrameRef.current = window.requestAnimationFrame(() => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-    // Use displayViewport for drawing the objects so they appear static during drag.
-    const {
-      minimapScale: displayMinimapScale,
-      worldToMinimap: displayWorldToMinimap,
-    } = getMinimapTransform(displayViewport);
+      const {
+        minimapScale: displayMinimapScale,
+        worldToMinimap: displayWorldToMinimap,
+      } = getMinimapTransform(displayViewport);
 
-    // --- Drawing ---
-    ctx.clearRect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
-    ctx.fillStyle = 'rgba(240, 240, 240, 0.9)';
-    ctx.fillRect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
+      ctx.clearRect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
+      ctx.fillStyle = 'rgba(240, 240, 240, 0.9)';
+      ctx.fillRect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
 
-    // Draw elements
-    ctx.fillStyle = '#9CA3AF'; // gray-400
-    elements.forEach((el) => {
-      const mmPos = displayWorldToMinimap(el.position);
-      const mmWidth = Math.max(1, el.width * displayMinimapScale);
-      const mmHeight = Math.max(1, el.height * displayMinimapScale);
+      ctx.fillStyle = '#9CA3AF';
+      elements.forEach((el) => {
+        const mmPos = displayWorldToMinimap(el.position);
+        const mmWidth = Math.max(1, el.width * displayMinimapScale);
+        const mmHeight = Math.max(1, el.height * displayMinimapScale);
 
-      // Culling to improve performance
-      if (
-        mmPos.x + mmWidth / 2 < 0 ||
-        mmPos.x - mmWidth / 2 > MINIMAP_WIDTH ||
-        mmPos.y + mmHeight / 2 < 0 ||
-        mmPos.y - mmHeight / 2 > MINIMAP_HEIGHT
-      ) {
-        return;
-      }
+        if (
+          mmPos.x + mmWidth / 2 < 0 ||
+          mmPos.x - mmWidth / 2 > MINIMAP_WIDTH ||
+          mmPos.y + mmHeight / 2 < 0 ||
+          mmPos.y - mmHeight / 2 > MINIMAP_HEIGHT
+        ) {
+          return;
+        }
 
-      ctx.fillRect(
-        mmPos.x - mmWidth / 2,
-        mmPos.y - mmHeight / 2,
-        mmWidth,
-        mmHeight,
-      );
+        ctx.fillRect(
+          mmPos.x - mmWidth / 2,
+          mmPos.y - mmHeight / 2,
+          mmWidth,
+          mmHeight,
+        );
+      });
+
+      const vpPos = displayWorldToMinimap({ x: viewport.x, y: viewport.y });
+      const vpWidth = viewport.width * displayMinimapScale;
+      const vpHeight = viewport.height * displayMinimapScale;
+
+      ctx.fillStyle = 'rgba(59, 130, 246, 0.2)';
+      ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
+      ctx.lineWidth = 1;
+      ctx.fillRect(vpPos.x, vpPos.y, vpWidth, vpHeight);
+      ctx.strokeRect(vpPos.x, vpPos.y, vpWidth, vpHeight);
+      drawFrameRef.current = null;
     });
 
-    // Draw the LIVE viewport rectangle. It must move.
-    // We use the same frozen transform to place it on the frozen map background.
-    const vpPos = displayWorldToMinimap({ x: viewport.x, y: viewport.y });
-    const vpWidth = viewport.width * displayMinimapScale;
-    const vpHeight = viewport.height * displayMinimapScale;
-
-    ctx.fillStyle = 'rgba(59, 130, 246, 0.2)';
-    ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
-    ctx.lineWidth = 1;
-    ctx.fillRect(vpPos.x, vpPos.y, vpWidth, vpHeight);
-    ctx.strokeRect(vpPos.x, vpPos.y, vpWidth, vpHeight);
+    return () => {
+      if (drawFrameRef.current !== null) {
+        window.cancelAnimationFrame(drawFrameRef.current);
+        drawFrameRef.current = null;
+      }
+    };
   }, [elements, viewport, isCollapsed, getMinimapTransform, displayViewport]);
 
   const handleInteraction = useCallback(
@@ -146,7 +151,7 @@ export const Minimap: React.FC<MinimapProps> = ({
   };
 
   return (
-    <div className="fixed bottom-4 right-4 z-20 flex flex-col items-end gap-2 pointer-events-none">
+    <div className="fixed bottom-4 right-4 z-30 flex flex-col items-end gap-2 pointer-events-none">
       <div className="pointer-events-auto bg-white/90 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 px-3 py-1.5 flex items-center gap-3 text-xs font-semibold text-gray-600">
         <div className="flex items-center gap-1" title={t('stats_images')}>
           <span className="text-sm">🖼️</span>
@@ -229,6 +234,7 @@ export const Minimap: React.FC<MinimapProps> = ({
           className={`transition-all duration-300 ease-in-out overflow-hidden ${isCollapsed ? 'max-h-0' : 'max-h-screen'}`}
         >
           <canvas
+            data-testid="minimap-canvas"
             ref={canvasRef}
             width={MINIMAP_WIDTH}
             height={MINIMAP_HEIGHT}
@@ -243,3 +249,5 @@ export const Minimap: React.FC<MinimapProps> = ({
     </div>
   );
 };
+
+export const Minimap = memo(MinimapComponent);

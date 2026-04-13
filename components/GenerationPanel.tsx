@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { memo, useState } from 'react';
 
 interface GenerationPanelProps {
   isGenerating: boolean;
@@ -8,7 +8,7 @@ interface GenerationPanelProps {
   t: (key: string) => string;
 }
 
-export const GenerationPanel: React.FC<GenerationPanelProps> = ({
+const GenerationPanelComponent: React.FC<GenerationPanelProps> = ({
   isGenerating,
   images,
   onAddToCanvas,
@@ -42,6 +42,7 @@ export const GenerationPanel: React.FC<GenerationPanelProps> = ({
       </button>
 
       <div
+        data-testid="generation-panel"
         className={`absolute top-0 right-0 h-full z-20 p-4 bg-white/80 backdrop-blur-sm shadow-lg border-l border-gray-200 w-80 flex flex-col gap-4 transition-transform duration-300 ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}
       >
         <div>
@@ -95,3 +96,5 @@ export const GenerationPanel: React.FC<GenerationPanelProps> = ({
     </>
   );
 };
+
+export const GenerationPanel = memo(GenerationPanelComponent);

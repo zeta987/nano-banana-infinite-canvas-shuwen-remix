@@ -53,6 +53,8 @@ export type CanvasElement =
   | DrawingElement
   | IFrameElement;
 
+export type ElementUpdate = Partial<CanvasElement> & { id: string };
+
 export interface AnalysisContent {
   description: string;
   suggestions: string[];

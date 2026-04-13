@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type {
   CanvasElement,
   Point,
@@ -14,7 +14,13 @@ interface TransformableElementProps {
   isOutpainting: boolean;
   zoom: number;
   onSelect: (id: string, shiftKey: boolean) => void;
-  onUpdate: (element: CanvasElement, dragDelta?: Point) => void;
+  onUpdate: (
+    element: CanvasElement,
+    metadata?: {
+      interactionType?: NonNullable<Interaction>['type'];
+      dragDelta?: Point;
+    },
+  ) => void;
   onInteractionEnd: () => void;
   onContextMenu: (
     e: React.MouseEvent | React.TouchEvent,
@@ -23,15 +29,15 @@ interface TransformableElementProps {
   onEditDrawing: (elementId: string) => void;
   t: (key: string) => string;
   language: 'en' | 'zh';
-  analysisResults: Record<string, AnalysisResult>;
-  analyzingElementId: string | null;
+  analysis?: AnalysisResult;
+  isAnalysisVisible: boolean;
+  isAnalyzing: boolean;
   onAnalyzeElement: (elementId: string) => void;
   onOptimizeNotePrompt: (elementId: string) => void;
-  analysisVisibility: Record<string, boolean>;
   onToggleAnalysisVisibility: (elementId: string) => void;
   onClearAnalysis: (elementId: string) => void;
   onTranslateAnalysis: (elementId: string) => void;
-  translatingElementId: string | null;
+  isTranslating: boolean;
 }
 
 type Interaction = {
@@ -208,7 +214,7 @@ const formatTextWithLinks = (text: string) => {
   });
 };
 
-export const TransformableElement: React.FC<TransformableElementProps> = ({
+const TransformableElementComponent: React.FC<TransformableElementProps> = ({
   element,
   isSelected,
   isMultiSelect,
@@ -221,19 +227,20 @@ export const TransformableElement: React.FC<TransformableElementProps> = ({
   onEditDrawing,
   t,
   language,
-  analysisResults,
-  analyzingElementId,
+  analysis,
+  isAnalysisVisible,
+  isAnalyzing,
   onAnalyzeElement,
   onOptimizeNotePrompt,
-  analysisVisibility,
   onToggleAnalysisVisibility,
   onClearAnalysis,
   onTranslateAnalysis,
-  translatingElementId,
+  isTranslating,
 }) => {
   const [interaction, setInteraction] = useState<Interaction>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const interactionRef = useRef<Interaction>(null);
   const elementRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const touchInteractionRef = useRef<{
@@ -247,12 +254,27 @@ export const TransformableElement: React.FC<TransformableElementProps> = ({
     startPoint: null,
     startEvent: null,
   });
+  const latestElementRef = useRef(element);
+  const zoomRef = useRef(zoom);
+  const onUpdateRef = useRef(onUpdate);
+  const onInteractionEndRef = useRef(onInteractionEnd);
+  const onEditDrawingRef = useRef(onEditDrawing);
+  const isOutpaintingRef = useRef(isOutpainting);
 
   useEffect(() => {
     if (!isSelected) {
       setIsEditing(false);
     }
   }, [isSelected]);
+
+  useEffect(() => {
+    latestElementRef.current = element;
+    zoomRef.current = zoom;
+    onUpdateRef.current = onUpdate;
+    onInteractionEndRef.current = onInteractionEnd;
+    onEditDrawingRef.current = onEditDrawing;
+    isOutpaintingRef.current = isOutpainting;
+  }, [element, zoom, onUpdate, onInteractionEnd, onEditDrawing, isOutpainting]);
 
   const handleCopy = useCallback((textToCopy: string, id: string) => {
     navigator.clipboard
@@ -318,108 +340,111 @@ export const TransformableElement: React.FC<TransformableElementProps> = ({
         );
       }
 
+      interactionRef.current = interactionDetails;
       setInteraction(interactionDetails);
     },
     [element, onSelect, isOutpainting, onContextMenu],
   );
 
-  const handleInteractionMove = useCallback(
-    (e: MouseEvent | TouchEvent) => {
-      if (!interaction) return;
+  const handleInteractionMove = useCallback((e: MouseEvent | TouchEvent) => {
+    const currentInteraction = interactionRef.current;
+    if (!currentInteraction) return;
 
-      let clientX, clientY;
-      if ('touches' in e) {
-        if (e.touches.length === 0) return;
-        const touch = e.touches[0];
-        clientX = touch.clientX;
-        clientY = touch.clientY;
+    let clientX, clientY;
+    if ('touches' in e) {
+      if (e.touches.length === 0) return;
+      const touch = e.touches[0];
+      clientX = touch.clientX;
+      clientY = touch.clientY;
 
-        if (
-          touchInteractionRef.current.startPoint &&
-          !touchInteractionRef.current.didMove
-        ) {
-          const dist = Math.hypot(
-            clientX - touchInteractionRef.current.startPoint.x,
-            clientY - touchInteractionRef.current.startPoint.y,
-          );
-          if (dist > 5) {
-            touchInteractionRef.current.didMove = true;
-            if (touchInteractionRef.current.longPressTimeout) {
-              clearTimeout(touchInteractionRef.current.longPressTimeout);
-            }
+      if (
+        touchInteractionRef.current.startPoint &&
+        !touchInteractionRef.current.didMove
+      ) {
+        const dist = Math.hypot(
+          clientX - touchInteractionRef.current.startPoint.x,
+          clientY - touchInteractionRef.current.startPoint.y,
+        );
+        if (dist > 5) {
+          touchInteractionRef.current.didMove = true;
+          if (touchInteractionRef.current.longPressTimeout) {
+            clearTimeout(touchInteractionRef.current.longPressTimeout);
           }
         }
+      }
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
+
+    const { type, startPoint, startElement } = currentInteraction;
+    const dx = (clientX - startPoint.x) / zoomRef.current;
+    const dy = (clientY - startPoint.y) / zoomRef.current;
+
+    if (type === 'drag') {
+      const newPosition = {
+        x: startElement.position.x + dx,
+        y: startElement.position.y + dy,
+      };
+      const delta = { x: dx, y: dy };
+
+      let updatedElement: CanvasElement;
+
+      if (startElement.type === 'arrow') {
+        updatedElement = {
+          ...startElement,
+          position: newPosition,
+          start: {
+            x: startElement.start.x + dx,
+            y: startElement.start.y + dy,
+          },
+          end: { x: startElement.end.x + dx, y: startElement.end.y + dy },
+        };
       } else {
-        clientX = e.clientX;
-        clientY = e.clientY;
+        updatedElement = { ...startElement, position: newPosition };
       }
 
-      const { type, startPoint, startElement } = interaction;
-      const dx = (clientX - startPoint.x) / zoom;
-      const dy = (clientY - startPoint.y) / zoom;
+      onUpdateRef.current(updatedElement, {
+        interactionType: type,
+        dragDelta: delta,
+      });
+    } else if (type === 'resize') {
+      const rad = startElement.rotation * (Math.PI / 180);
+      const cos = Math.cos(-rad);
+      const sin = Math.sin(-rad);
+      const rotDx = dx * cos - dy * sin;
+      const rotDy = dx * sin + dy * cos;
 
-      if (type === 'drag') {
-        const newPosition = {
-          x: startElement.position.x + dx,
-          y: startElement.position.y + dy,
-        };
-        // Pass cumulative delta (from drag start) instead of frame delta
-        // to avoid stale-closure drift when React re-renders lag behind mousemove events
-        const delta = { x: dx, y: dy };
+      let newWidth: number;
+      let newHeight: number;
 
-        let updatedElement: CanvasElement;
+      if (startElement.type === 'image') {
+        const widthChangeRatio =
+          (startElement.width + rotDx) / startElement.width;
+        const heightChangeRatio =
+          (startElement.height + rotDy) / startElement.height;
+        const avgRatio = (widthChangeRatio + heightChangeRatio) / 2;
 
-        if (startElement.type === 'arrow') {
-          updatedElement = {
-            ...startElement,
-            position: newPosition,
-            start: {
-              x: startElement.start.x + dx,
-              y: startElement.start.y + dy,
-            },
-            end: { x: startElement.end.x + dx, y: startElement.end.y + dy },
-          };
-        } else {
-          updatedElement = { ...startElement, position: newPosition };
-        }
+        const widthRatioToMin = 20 / startElement.width;
+        const heightRatioToMin = 20 / startElement.height;
+        const minAllowedRatio = Math.max(widthRatioToMin, heightRatioToMin);
 
-        onUpdate(updatedElement, delta);
-      } else if (type === 'resize') {
-        const rad = startElement.rotation * (Math.PI / 180);
-        const cos = Math.cos(-rad);
-        const sin = Math.sin(-rad);
-        const rotDx = dx * cos - dy * sin;
-        const rotDy = dx * sin + dy * cos;
+        const finalRatio = Math.max(avgRatio, minAllowedRatio);
 
-        let newWidth: number;
-        let newHeight: number;
+        newWidth = startElement.width * finalRatio;
+        newHeight = startElement.height * finalRatio;
+      } else {
+        newWidth = Math.max(20, startElement.width + rotDx);
+        newHeight = Math.max(20, startElement.height + rotDy);
+      }
 
-        if (startElement.type === 'image') {
-          const widthChangeRatio =
-            (startElement.width + rotDx) / startElement.width;
-          const heightChangeRatio =
-            (startElement.height + rotDy) / startElement.height;
-          const avgRatio = (widthChangeRatio + heightChangeRatio) / 2;
+      const dw = newWidth - startElement.width;
+      const dh = newHeight - startElement.height;
+      const posDx = (dw / 2) * Math.cos(rad) - (dh / 2) * Math.sin(rad);
+      const posDy = (dw / 2) * Math.sin(rad) + (dh / 2) * Math.cos(rad);
 
-          const widthRatioToMin = 20 / startElement.width;
-          const heightRatioToMin = 20 / startElement.height;
-          const minAllowedRatio = Math.max(widthRatioToMin, heightRatioToMin);
-
-          const finalRatio = Math.max(avgRatio, minAllowedRatio);
-
-          newWidth = startElement.width * finalRatio;
-          newHeight = startElement.height * finalRatio;
-        } else {
-          newWidth = Math.max(20, startElement.width + rotDx);
-          newHeight = Math.max(20, startElement.height + rotDy);
-        }
-
-        const dw = newWidth - startElement.width;
-        const dh = newHeight - startElement.height;
-        const posDx = (dw / 2) * Math.cos(rad) - (dh / 2) * Math.sin(rad);
-        const posDy = (dw / 2) * Math.sin(rad) + (dh / 2) * Math.cos(rad);
-
-        onUpdate({
+      onUpdateRef.current(
+        {
           ...startElement,
           width: newWidth,
           height: newHeight,
@@ -427,56 +452,63 @@ export const TransformableElement: React.FC<TransformableElementProps> = ({
             x: startElement.position.x + posDx,
             y: startElement.position.y + posDy,
           },
-        });
-      } else if (
-        type === 'rotate' &&
-        interaction.center &&
-        interaction.startAngle !== undefined
-      ) {
-        const { center, startAngle } = interaction;
-        const currentAngle = Math.atan2(clientY - center.y, clientX - center.x);
-        const angleDiff = currentAngle - startAngle;
-        onUpdate({
+        },
+        { interactionType: type },
+      );
+    } else if (
+      type === 'rotate' &&
+      currentInteraction.center &&
+      currentInteraction.startAngle !== undefined
+    ) {
+      const { center, startAngle } = currentInteraction;
+      const currentAngle = Math.atan2(clientY - center.y, clientX - center.x);
+      const angleDiff = currentAngle - startAngle;
+      onUpdateRef.current(
+        {
           ...startElement,
           rotation: startElement.rotation + angleDiff * (180 / Math.PI),
-        });
-      } else if (type === 'resize-arrow-start' || type === 'resize-arrow-end') {
-        const arrowElement = startElement as ArrowElement;
-        let { start, end } = arrowElement;
+        },
+        { interactionType: type },
+      );
+    } else if (type === 'resize-arrow-start' || type === 'resize-arrow-end') {
+      const arrowElement = startElement as ArrowElement;
+      let { start, end } = arrowElement;
 
-        if (type === 'resize-arrow-start') {
-          start = {
-            x: arrowElement.start.x + dx,
-            y: arrowElement.start.y + dy,
-          };
-        } else {
-          end = { x: arrowElement.end.x + dx, y: arrowElement.end.y + dy };
-        }
-
-        const newDx = end.x - start.x;
-        const newDy = end.y - start.y;
-
-        const newWidth = Math.max(10, Math.sqrt(newDx * newDx + newDy * newDy));
-        const newRotation = Math.atan2(newDy, newDx) * (180 / Math.PI);
-        const newPosition = {
-          x: (start.x + end.x) / 2,
-          y: (start.y + end.y) / 2,
+      if (type === 'resize-arrow-start') {
+        start = {
+          x: arrowElement.start.x + dx,
+          y: arrowElement.start.y + dy,
         };
+      } else {
+        end = { x: arrowElement.end.x + dx, y: arrowElement.end.y + dy };
+      }
 
-        onUpdate({
+      const newDx = end.x - start.x;
+      const newDy = end.y - start.y;
+
+      const newWidth = Math.max(10, Math.sqrt(newDx * newDx + newDy * newDy));
+      const newRotation = Math.atan2(newDy, newDx) * (180 / Math.PI);
+      const newPosition = {
+        x: (start.x + end.x) / 2,
+        y: (start.y + end.y) / 2,
+      };
+
+      onUpdateRef.current(
+        {
           ...arrowElement,
           start,
           end,
           position: newPosition,
           width: newWidth,
           rotation: newRotation,
-        });
-      }
-    },
-    [interaction, onUpdate, zoom, element.position.x, element.position.y],
-  );
+        },
+        { interactionType: type },
+      );
+    }
+  }, []);
 
   const handleInteractionEnd = useCallback(() => {
+    const currentInteraction = interactionRef.current;
     if (touchInteractionRef.current.longPressTimeout) {
       clearTimeout(touchInteractionRef.current.longPressTimeout);
     }
@@ -485,25 +517,27 @@ export const TransformableElement: React.FC<TransformableElementProps> = ({
     if (
       touchInteractionRef.current.startEvent &&
       !touchInteractionRef.current.didMove &&
-      !isOutpainting
+      !isOutpaintingRef.current
     ) {
-      if (element.type === 'note') {
+      const currentElement = latestElementRef.current;
+      if (currentElement.type === 'note') {
         setIsEditing(true);
         setTimeout(() => {
           textareaRef.current?.focus();
           textareaRef.current?.select();
         }, 0);
-      } else if (element.type === 'drawing') {
-        onEditDrawing(element.id);
+      } else if (currentElement.type === 'drawing') {
+        onEditDrawingRef.current(currentElement.id);
       }
     }
 
-    if (interaction) {
-      onInteractionEnd();
+    if (currentInteraction) {
+      onInteractionEndRef.current();
     }
+    interactionRef.current = null;
     setInteraction(null);
     touchInteractionRef.current.startEvent = null;
-  }, [interaction, onInteractionEnd, element, onEditDrawing, isOutpainting]);
+  }, []);
 
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
@@ -530,32 +564,40 @@ export const TransformableElement: React.FC<TransformableElementProps> = ({
   };
 
   useEffect(() => {
-    if (interaction) {
-      window.addEventListener('mousemove', handleInteractionMove);
-      window.addEventListener('mouseup', handleInteractionEnd);
-      window.addEventListener('touchmove', handleInteractionMove, {
-        passive: false,
-      });
-      window.addEventListener('touchend', handleInteractionEnd);
-      window.addEventListener('touchcancel', handleInteractionEnd);
-    }
+    if (!interaction) return;
+
+    const handleWindowMove = (event: MouseEvent | TouchEvent) => {
+      handleInteractionMove(event);
+    };
+    const handleWindowEnd = () => {
+      handleInteractionEnd();
+    };
+
+    window.addEventListener('mousemove', handleWindowMove);
+    window.addEventListener('mouseup', handleWindowEnd);
+    window.addEventListener('touchmove', handleWindowMove, {
+      passive: false,
+    });
+    window.addEventListener('touchend', handleWindowEnd);
+    window.addEventListener('touchcancel', handleWindowEnd);
+
     return () => {
-      window.removeEventListener('mousemove', handleInteractionMove);
-      window.removeEventListener('mouseup', handleInteractionEnd);
-      window.removeEventListener('touchmove', handleInteractionMove);
-      window.removeEventListener('touchend', handleInteractionEnd);
-      window.removeEventListener('touchcancel', handleInteractionEnd);
+      window.removeEventListener('mousemove', handleWindowMove);
+      window.removeEventListener('mouseup', handleWindowEnd);
+      window.removeEventListener('touchmove', handleWindowMove);
+      window.removeEventListener('touchend', handleWindowEnd);
+      window.removeEventListener('touchcancel', handleWindowEnd);
     };
   }, [interaction, handleInteractionMove, handleInteractionEnd]);
 
-  const analysis = analysisResults[element.id];
-  const isVisible = analysisVisibility[element.id];
+  const isVisible = isAnalysisVisible;
   const contentToDisplay =
     language === 'zh' && analysis?.zh ? analysis.zh : analysis?.en;
   const isNote = element.type === 'note';
 
   return (
     <div
+      data-testid={`element-${element.id}`}
       ref={elementRef}
       className="absolute"
       style={{
@@ -823,14 +865,14 @@ export const TransformableElement: React.FC<TransformableElementProps> = ({
                     : onAnalyzeElement(element.id)
                 }
                 disabled={
-                  analyzingElementId === element.id ||
+                  isAnalyzing ||
                   (isNote && !element.content.trim()) ||
                   ((element.type === 'image' || element.type === 'drawing') &&
                     !element.src)
                 }
                 className="flex-grow px-3 py-2 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-50 transition-colors disabled:bg-indigo-400 disabled:cursor-wait"
               >
-                {analyzingElementId === element.id
+                {isAnalyzing
                   ? isNote
                     ? t('optimizing')
                     : t('analyzing')
@@ -850,16 +892,10 @@ export const TransformableElement: React.FC<TransformableElementProps> = ({
                   <button
                     title={t('translate')}
                     onClick={() => onTranslateAnalysis(element.id)}
-                    disabled={
-                      translatingElementId === element.id || !!analysis?.zh
-                    }
+                    disabled={isTranslating || !!analysis?.zh}
                     className="p-1.5 text-gray-600 hover:bg-gray-200 rounded-md transition-colors disabled:text-gray-300 disabled:cursor-not-allowed"
                   >
-                    {translatingElementId === element.id ? (
-                      <SpinnerIcon />
-                    ) : (
-                      <TranslateIcon />
-                    )}
+                    {isTranslating ? <SpinnerIcon /> : <TranslateIcon />}
                   </button>
                   <button
                     title={t('clear')}
@@ -937,3 +973,5 @@ export const TransformableElement: React.FC<TransformableElementProps> = ({
     </div>
   );
 };
+
+export const TransformableElement = memo(TransformableElementComponent);
