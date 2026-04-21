@@ -37,6 +37,378 @@ export const COLORS = [
   { name: 'Pink', bg: 'bg-pink-500', text: 'text-pink-500' },
 ];
 
+// Compute a gpt-image-2 compatible size string from a canvas aspectRatio label
+// and a tier. Supports every ratio defined in InfiniteCanvas's ASPECT_RATIOS:
+// auto, 21:9, 16:9, 4:3, 3:2, 5:4, 1:1, 9:16, 3:4, 2:3, 4:5. All returned
+// dimensions are multiples of 16 and land inside the official constraints:
+// max edge ≤ 3840, long/short ratio ≤ 3:1, total pixels 655,360–8,294,400.
+const OPENAI_ASPECT_RATIO_VALUES: Record<string, number> = {
+  '21:9': 21 / 9,
+  '16:9': 16 / 9,
+  '4:3': 4 / 3,
+  '3:2': 3 / 2,
+  '5:4': 5 / 4,
+  '1:1': 1,
+  '9:21': 9 / 21,
+  '9:16': 9 / 16,
+  '3:4': 3 / 4,
+  '2:3': 2 / 3,
+  '4:5': 4 / 5,
+};
+const OPENAI_MAX_EDGE_BY_TIER: Record<string, number> = {
+  '512': 1024, // gpt-image-2 min edge is effectively 1024 (MIN_PIXELS ≈ 655k)
+  '1K': 1536,
+  '2K': 2048,
+  '4K': 3840,
+};
+const OPENAI_MIN_PIXELS = 655_360;
+const OPENAI_MAX_PIXELS = 8_294_400;
+
+const roundToMultipleOf16 = (n: number): number =>
+  Math.max(16, Math.round(n / 16) * 16);
+const floorToMultipleOf16 = (n: number): number =>
+  Math.max(16, Math.floor(n / 16) * 16);
+
+export const computeOpenaiSize = (
+  aspectRatio: string,
+  tier: string,
+): string => {
+  // 'auto' aspect still honors the tier so users who don't care about ratio
+  // can still request a big canvas.
+  if (aspectRatio === 'auto') {
+    if (tier === '512') return 'auto';
+    if (tier === '1K') return '1024x1024';
+    if (tier === '2K') return '2048x2048';
+    return '3840x2160'; // 4K landscape (no 4K square preset exists)
+  }
+  const ratio = OPENAI_ASPECT_RATIO_VALUES[aspectRatio];
+  if (!ratio) return 'auto';
+  const maxEdge = OPENAI_MAX_EDGE_BY_TIER[tier] ?? 1536;
+
+  let w: number;
+  let h: number;
+  if (ratio >= 1) {
+    w = maxEdge;
+    h = roundToMultipleOf16(maxEdge / ratio);
+  } else {
+    h = maxEdge;
+    w = roundToMultipleOf16(maxEdge * ratio);
+  }
+
+  // Scale down (floor to stay under) if we exceeded the pixel budget.
+  let pixels = w * h;
+  if (pixels > OPENAI_MAX_PIXELS) {
+    const scale = Math.sqrt(OPENAI_MAX_PIXELS / pixels);
+    w = floorToMultipleOf16(w * scale);
+    h = floorToMultipleOf16(h * scale);
+  }
+  // Scale up to clear the minimum pixel floor (rarely needed).
+  pixels = w * h;
+  if (pixels < OPENAI_MIN_PIXELS) {
+    const scale = Math.sqrt(OPENAI_MIN_PIXELS / pixels);
+    w = roundToMultipleOf16(w * scale);
+    h = roundToMultipleOf16(h * scale);
+  }
+  return `${w}x${h}`;
+};
+
+// Convert a base64 data URL into a Blob for multipart/form-data upload.
+const dataUrlToBlob = (dataUrl: string): Blob => {
+  const [header, base64] = dataUrl.split(',');
+  const mime = header.match(/data:(.*);base64/)?.[1] || 'image/png';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+};
+
+// Convert the ImageEditModal user-drawn mask (any non-transparent pixel = painted)
+// into OpenAI's mask convention: transparent = edit, opaque = keep.
+const generateOpenaiMaskFromDrawn = async (
+  drawnMaskDataUrl: string,
+): Promise<string> => {
+  const img = new Image();
+  img.src = drawnMaskDataUrl;
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = reject;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Could not create 2D context for mask conversion');
+  ctx.drawImage(img, 0, 0);
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const px = imageData.data;
+  for (let i = 0; i < px.length; i += 4) {
+    const wasPainted = px[i + 3] > 0;
+    // OpenAI convention: alpha=0 means "edit here"; alpha=255 means "preserve"
+    px[i] = 255;
+    px[i + 1] = 255;
+    px[i + 2] = 255;
+    px[i + 3] = wasPainted ? 0 : 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas.toDataURL('image/png');
+};
+
+// Build an OpenAI mask PNG from an RGBA base image where the transparent regions
+// are the areas to fill (outpainting use case). Mirrors the base image alpha:
+// transparent base pixel -> transparent mask pixel (fill); opaque base -> opaque mask (keep).
+const generateOpenaiMaskFromTransparency = async (
+  rgbaImageDataUrl: string,
+): Promise<string> => {
+  const img = new Image();
+  img.src = rgbaImageDataUrl;
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = reject;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Could not create 2D context for outpaint mask');
+  ctx.drawImage(img, 0, 0);
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const px = imageData.data;
+  for (let i = 0; i < px.length; i += 4) {
+    const isTransparent = px[i + 3] === 0;
+    px[i] = 255;
+    px[i + 1] = 255;
+    px[i + 2] = 255;
+    px[i + 3] = isTransparent ? 0 : 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas.toDataURL('image/png');
+};
+
+// Extract the aggregated assistant text from a POST /v1/responses response body.
+// The Responses API exposes output as an array of items; we collect every output_text
+// content part from message items, falling back to the convenience `output_text` field.
+const extractResponsesApiOutputText = (data: unknown): string => {
+  if (!data || typeof data !== 'object') return '';
+  const d = data as Record<string, unknown>;
+  if (typeof d.output_text === 'string' && d.output_text) {
+    return d.output_text;
+  }
+  const output = d.output;
+  if (!Array.isArray(output)) return '';
+  const parts: string[] = [];
+  for (const item of output) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    if (rec.type !== 'message') continue;
+    const content = rec.content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (!part || typeof part !== 'object') continue;
+      const p = part as Record<string, unknown>;
+      if (p.type === 'output_text' && typeof p.text === 'string') {
+        parts.push(p.text);
+      }
+    }
+  }
+  return parts.join('\n');
+};
+
+// Call an OpenAI-compatible text endpoint (either /v1/responses or
+// /v1/chat/completions). Handles both modalities + optional image attachment.
+// Returns the raw assistant text (no JSON parsing).
+export const callOpenaiTextAPI = async (params: {
+  baseUrl: string;
+  apiKey: string;
+  endpoint: 'responses' | 'chat_completions';
+  model: string;
+  systemPrompt: string;
+  userText: string;
+  imageUrl?: string;
+  reasoningEffort?: string;
+  jsonMode?: boolean;
+}): Promise<string> => {
+  const cleanBase = params.baseUrl.replace(/\/$/, '');
+  // OpenAI's json_object mode requires the word "json" to appear in the
+  // user-visible input (NOT just the system prompt / instructions). Enforce
+  // this upfront so third-party proxies don't reject with
+  // "Response input messages must contain the word 'json' in some form…".
+  const needsJsonHint =
+    params.jsonMode === true && !/json/i.test(params.userText);
+  const userText = needsJsonHint
+    ? `${params.userText}\n\nReply strictly in JSON format.`
+    : params.userText;
+
+  if (params.endpoint === 'chat_completions') {
+    const userContent = params.imageUrl
+      ? [
+          { type: 'text', text: userText },
+          { type: 'image_url', image_url: { url: params.imageUrl } },
+        ]
+      : userText;
+    const body: Record<string, unknown> = {
+      model: params.model,
+      messages: [
+        { role: 'system', content: params.systemPrompt },
+        { role: 'user', content: userContent },
+      ],
+    };
+    if (params.jsonMode) body.response_format = { type: 'json_object' };
+    if (params.reasoningEffort)
+      body.reasoning = { effort: params.reasoningEffort };
+
+    const response = await fetch(`${cleanBase}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${params.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const errData = await response.json().catch(() => null);
+      throw new Error(
+        `OpenAI API Error: ${response.status} ${errData ? JSON.stringify(errData) : response.statusText}`,
+      );
+    }
+    const data = await response.json();
+    return data?.choices?.[0]?.message?.content ?? '';
+  }
+
+  // Responses API
+  const body: Record<string, unknown> = {
+    model: params.model,
+    instructions: params.systemPrompt,
+    input: params.imageUrl
+      ? [
+          {
+            role: 'user',
+            content: [
+              { type: 'input_text', text: userText },
+              { type: 'input_image', image_url: params.imageUrl },
+            ],
+          },
+        ]
+      : userText,
+  };
+  if (params.jsonMode) body.text = { format: { type: 'json_object' } };
+  if (params.reasoningEffort)
+    body.reasoning = { effort: params.reasoningEffort };
+
+  const response = await fetch(`${cleanBase}/responses`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${params.apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const errData = await response.json().catch(() => null);
+    throw new Error(
+      `OpenAI API Error: ${response.status} ${errData ? JSON.stringify(errData) : response.statusText}`,
+    );
+  }
+  const data = await response.json();
+  return extractResponsesApiOutputText(data);
+};
+
+// Fetch the list of available models from an OpenAI-compatible backend.
+// Returns ids sorted alphabetically, filtered to exclude non-text assets
+// (image/audio/embedding/moderation/tts models).
+const fetchOpenaiModelList = async (
+  baseUrl: string,
+  apiKey: string,
+): Promise<string[]> => {
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/models`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!response.ok) {
+    const errData = await response.json().catch(() => null);
+    throw new Error(
+      `Models API Error: ${response.status} ${errData ? JSON.stringify(errData) : response.statusText}`,
+    );
+  }
+  const data = await response.json();
+  const ids: string[] = Array.isArray(data?.data)
+    ? data.data
+        .map((m: { id?: unknown }) => (typeof m.id === 'string' ? m.id : null))
+        .filter((id: string | null): id is string => id !== null)
+    : [];
+  // Best-effort filter: keep GPT/o-series/reasoning-style text models for the optimization picker.
+  const textLike = ids.filter(
+    (id) =>
+      /^(gpt-|o\d|chatgpt-|text-)/i.test(id) &&
+      !/(image|dall-e|tts|whisper|embedding|moderation|audio|realtime)/i.test(
+        id,
+      ),
+  );
+  return (textLike.length > 0 ? textLike : ids).sort();
+};
+
+// Call OpenAI's /v1/images/edits endpoint with a base image and mask.
+// Returns an array of data-URL strings (one per image in the response).
+export const openaiEditImage = async (params: {
+  baseUrl: string;
+  apiKey: string;
+  imageBlob: Blob;
+  maskBlob: Blob;
+  prompt: string;
+  size: string;
+  quality: string;
+  outputFormat: 'png' | 'jpeg' | 'webp';
+  background: string;
+  moderation?: string;
+  n?: number;
+}): Promise<string[]> => {
+  const form = new FormData();
+  form.append('model', 'gpt-image-2');
+  form.append('prompt', params.prompt);
+  form.append('n', String(params.n ?? 1));
+  form.append('size', params.size);
+  form.append('quality', params.quality);
+  form.append('output_format', params.outputFormat);
+  form.append('background', params.background);
+  if (params.moderation) {
+    form.append('moderation', params.moderation);
+  }
+  form.append('image', params.imageBlob, 'image.png');
+  form.append('mask', params.maskBlob, 'mask.png');
+
+  const response = await fetch(
+    `${params.baseUrl.replace(/\/$/, '')}/images/edits`,
+    {
+      method: 'POST',
+      // Do NOT set Content-Type: the browser must add the multipart boundary.
+      headers: { Authorization: `Bearer ${params.apiKey}` },
+      body: form,
+    },
+  );
+  if (!response.ok) {
+    const errData = await response.json().catch(() => null);
+    console.error(
+      '[API Error] OpenAI Image Edit:',
+      errData || response.statusText,
+    );
+    throw new Error(
+      `OpenAI Edits API Error: ${response.status} ${errData ? JSON.stringify(errData) : response.statusText}`,
+    );
+  }
+  const data = await response.json();
+  console.log('[API Response] OpenAI Image Edit:', data);
+  const responseMime =
+    params.outputFormat === 'jpeg'
+      ? 'image/jpeg'
+      : params.outputFormat === 'webp'
+        ? 'image/webp'
+        : 'image/png';
+  return (data.data ?? [])
+    .map((item: { b64_json?: string; url?: string }) =>
+      item.b64_json ? `data:${responseMime};base64,${item.b64_json}` : null,
+    )
+    .filter((x: string | null): x is string => x !== null);
+};
+
 const MEMO_1_ZH =
   '[ 🍌 Nano Banana 無限畫布 Infinite Canvas 🍌 ]\n\n👑 原創作者 (Original Creator): @Prompt_case\nThreads: @Prompt_case | Patreon: www.patreon.com/MattTrendsPromptEngineering\nCopyright: Prompt_case | 版權所有\n\n🛠️ 二次創作與優化 (Second Mod): 述文老師學習網\n教學文章：https://harmonica80.blogspot.com/2025/12/ainano-banana-infinite-canvas-gemini-3.html\n\n✨ 三次修改版 (Current Version): 基於述文老師版本進階修改\n(加入 Gemini 3 聯網搜尋、UI 優化、網頁嵌入等新功能)';
 const MEMO_1_EN =
@@ -226,6 +598,38 @@ const translations: Record<string, Record<string, string>> = {
     qualityPro: 'Banana Pro',
     usingFlash: 'Using gemini-3.1-flash-image-preview',
     usingPro: 'Using gemini-3-pro-image-preview',
+    usingGptImage2: 'Using gpt-image-2',
+    openaiQualityLabel: 'Quality',
+    openaiFormatLabel: 'Format',
+    openaiBackgroundLabel: 'Background',
+    openaiQualityAuto: 'Auto',
+    openaiQualityLow: 'Low',
+    openaiQualityMedium: 'Medium',
+    openaiQualityHigh: 'High',
+    openaiBackgroundAuto: 'Auto',
+    openaiBackgroundOpaque: 'Opaque',
+    openaiModerationLabel: 'Moderation',
+    openaiModerationAuto: 'Auto',
+    openaiModerationLow: 'Low',
+    openaiOptimizationSharesKey:
+      '💡 Shares Base URL & API Key from Model Selection',
+    openaiOptimizationNeedsOwnKey:
+      '⚠️ Image generation is not on OpenAI — fill a dedicated Base URL + API Key for text optimization below.',
+    geminiOptimizationSharesKey:
+      '💡 Uses the Gemini credentials from Model Selection',
+    geminiOptimizationUsesBuiltin: '💡 Uses the built-in Gemini API Key',
+    geminiOptimizationNeedsOwnKey:
+      '⚠️ Image generation is on OpenAI — fill a Gemini API Key below (leave empty to fall back to the built-in key if available).',
+    fetchModels: 'Fetch available models',
+    fetchingModels: 'Fetching...',
+    fetchModelsFailed: 'Failed to fetch model list',
+    openaiModelInputPlaceholder: 'Model name (e.g. gpt-5.4, o3, gpt-4.1)',
+    openaiEndpointLabel: 'OpenAI endpoint',
+    openaiEndpointResponses: 'Responses API (/v1/responses)',
+    openaiEndpointChatCompletions: 'Chat Completions (/v1/chat/completions)',
+    openaiBaseUrlPlaceholder: 'OpenAI Base URL',
+    openaiApiKeyPlaceholder: 'OpenAI API Key',
+    geminiApiKeyPlaceholder: 'Gemini API Key (optional if built-in is available)',
     imageSize: 'Image Size',
     importTitle: 'Import Canvas',
     importDesc: 'Choose how you want to import this file.',
@@ -371,6 +775,36 @@ const translations: Record<string, Record<string, string>> = {
     qualityPro: 'Banana Pro',
     usingFlash: '使用gemini-3.1-flash-image-preview',
     usingPro: '使用gemini-3-pro-image-preview',
+    usingGptImage2: '使用 gpt-image-2',
+    openaiQualityLabel: '品質',
+    openaiFormatLabel: '格式',
+    openaiBackgroundLabel: '背景',
+    openaiQualityAuto: '自動',
+    openaiQualityLow: '低',
+    openaiQualityMedium: '中',
+    openaiQualityHigh: '高',
+    openaiBackgroundAuto: '自動',
+    openaiBackgroundOpaque: '不透明',
+    openaiModerationLabel: '內容審查',
+    openaiModerationAuto: '自動',
+    openaiModerationLow: '寬鬆',
+    openaiOptimizationSharesKey: '💡 共用「模型選擇」的 Base URL 與 API Key',
+    openaiOptimizationNeedsOwnKey:
+      '⚠️ 生圖不是使用 OpenAI — 請於下方另外填入文字優化專用的 Base URL 與 API Key。',
+    geminiOptimizationSharesKey: '💡 共用「模型選擇」的 Gemini 設定',
+    geminiOptimizationUsesBuiltin: '💡 使用內建的 Gemini API Key',
+    geminiOptimizationNeedsOwnKey:
+      '⚠️ 生圖使用 OpenAI — 請於下方填入 Gemini API Key（若有內建 Key 可留空 fallback）。',
+    fetchModels: '獲取可用模型',
+    fetchingModels: '獲取中...',
+    fetchModelsFailed: '獲取模型清單失敗',
+    openaiModelInputPlaceholder: '模型名稱（例：gpt-5.4、o3、gpt-4.1）',
+    openaiEndpointLabel: 'OpenAI 端點',
+    openaiEndpointResponses: 'Responses API (/v1/responses)',
+    openaiEndpointChatCompletions: 'Chat Completions (/v1/chat/completions)',
+    openaiBaseUrlPlaceholder: 'OpenAI Base URL',
+    openaiApiKeyPlaceholder: 'OpenAI API Key',
+    geminiApiKeyPlaceholder: 'Gemini API Key（若有內建 Key 可留空）',
     imageSize: '影像尺寸',
     importTitle: '匯入畫布',
     importDesc: '請選擇匯入此檔案的方式。',
@@ -473,6 +907,18 @@ const App: React.FC = () => {
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState<string>(
     'https://api.openai.com/v1',
   );
+  const [openaiQuality, setOpenaiQuality] = useState<
+    'low' | 'medium' | 'high' | 'auto'
+  >('auto');
+  const [openaiOutputFormat, setOpenaiOutputFormat] = useState<
+    'png' | 'jpeg' | 'webp'
+  >('png');
+  const [openaiBackground, setOpenaiBackground] = useState<'opaque' | 'auto'>(
+    'auto',
+  );
+  const [openaiModeration, setOpenaiModeration] = useState<'low' | 'auto'>(
+    'low',
+  );
   const [generationCount, setGenerationCount] = useState<number | string>(2);
   const [generationGoogleSearch, setGenerationGoogleSearch] = useState(true);
   const [generationImageSearch, setGenerationImageSearch] = useState(true);
@@ -488,13 +934,29 @@ const App: React.FC = () => {
   );
   const [optimizationThinkingLevel, setOptimizationThinkingLevel] =
     useState<string>('high');
-  const [optimizationOpenaiBaseUrl, setOptimizationOpenaiBaseUrl] =
-    useState<string>('https://api.openai.com/v1');
+  const [optimizationOpenaiModel, setOptimizationOpenaiModel] =
+    useState<string>('gpt-5.4');
+  const [optimizationGrounding] = useState<boolean>(true);
+  const [openaiAvailableModels, setOpenaiAvailableModels] = useState<string[]>(
+    [],
+  );
+  const [isFetchingOpenaiModels, setIsFetchingOpenaiModels] = useState(false);
+  const [openaiModelsFetchError, setOpenaiModelsFetchError] = useState<
+    string | null
+  >(null);
+  // Optimization-specific credentials, used only when the generation provider
+  // differs from the optimization provider (so the user has somewhere to put
+  // keys independently of the image generation pipeline).
   const [optimizationOpenaiApiKey, setOptimizationOpenaiApiKey] =
     useState<string>('');
-  const [optimizationOpenaiModel, setOptimizationOpenaiModel] =
-    useState<string>('gpt-4o');
-  const [optimizationGrounding] = useState<boolean>(true);
+  const [optimizationOpenaiBaseUrl, setOptimizationOpenaiBaseUrl] =
+    useState<string>('https://api.openai.com/v1');
+  const [optimizationGeminiKey, setOptimizationGeminiKey] =
+    useState<string>('');
+  // Which OpenAI text endpoint the optimization branch hits.
+  const [optimizationOpenaiEndpoint, setOptimizationOpenaiEndpoint] = useState<
+    'responses' | 'chat_completions'
+  >('responses');
 
   const [pendingImport, setPendingImport] = useState<PendingImportData | null>(
     null,
@@ -885,6 +1347,104 @@ const App: React.FC = () => {
     setEditingImage(null);
   };
 
+  // Resolve the effective OpenAI config for the optimization pipeline.
+  // If generation is already on OpenAI, share that key/URL; otherwise use
+  // the dedicated optimization-side inputs.
+  const getEffectiveOpenaiConfig = useCallback(() => {
+    const useShared = apiProvider === 'openai';
+    return {
+      apiKey: useShared ? openaiApiKey : optimizationOpenaiApiKey,
+      baseUrl: useShared ? openaiBaseUrl : optimizationOpenaiBaseUrl,
+    };
+  }, [
+    apiProvider,
+    openaiApiKey,
+    openaiBaseUrl,
+    optimizationOpenaiApiKey,
+    optimizationOpenaiBaseUrl,
+  ]);
+
+  // Resolve a GoogleGenAI client for the optimization pipeline.
+  // When generation is on OpenAI, getAi() can only fall back to the built-in
+  // key; if the user has supplied an optimization-side Gemini key, prefer that.
+  const getEffectiveGeminiAi = useCallback(() => {
+    if (apiProvider === 'openai' && optimizationGeminiKey) {
+      return new GoogleGenAI({ apiKey: optimizationGeminiKey });
+    }
+    return getAi();
+  }, [apiProvider, optimizationGeminiKey, getAi]);
+
+  const handleFetchOpenaiModels = useCallback(async () => {
+    const { apiKey, baseUrl } = getEffectiveOpenaiConfig();
+    if (!apiKey) {
+      setOpenaiModelsFetchError('API Key required — fill it above first.');
+      return;
+    }
+    setIsFetchingOpenaiModels(true);
+    setOpenaiModelsFetchError(null);
+    try {
+      const models = await fetchOpenaiModelList(baseUrl, apiKey);
+      setOpenaiAvailableModels(models);
+      if (models.length > 0 && !models.includes(optimizationOpenaiModel)) {
+        setOptimizationOpenaiModel(models[0]);
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setOpenaiModelsFetchError(message);
+    } finally {
+      setIsFetchingOpenaiModels(false);
+    }
+  }, [getEffectiveOpenaiConfig, optimizationOpenaiModel]);
+
+  // Build an OpenAI-backed inpaint callback for ImageEditModal when apiProvider === 'openai'.
+  // Returns undefined so the modal falls back to its default Gemini implementation otherwise.
+  const openaiInpaintCallback = useMemo(() => {
+    if (apiProvider !== 'openai') return undefined;
+    return async (params: {
+      baseImageSrc: string;
+      maskDataUrl: string;
+      prompt: string;
+      type: 'remove' | 'edit';
+    }): Promise<string> => {
+      if (!openaiApiKey) {
+        throw new Error(
+          'OpenAI API Key is missing. Please check your model settings.',
+        );
+      }
+      const mask = await generateOpenaiMaskFromDrawn(params.maskDataUrl);
+      const promptText =
+        params.type === 'remove'
+          ? 'Remove the masked region completely and realistically fill the area so it blends with the surrounding context.'
+          : `Replace the masked region according to this instruction: ${params.prompt}. Keep the rest of the image unchanged.`;
+
+      const results = await openaiEditImage({
+        baseUrl: openaiBaseUrl,
+        apiKey: openaiApiKey,
+        imageBlob: dataUrlToBlob(params.baseImageSrc),
+        maskBlob: dataUrlToBlob(mask),
+        prompt: promptText,
+        size: 'auto',
+        quality: openaiQuality,
+        outputFormat: openaiOutputFormat,
+        background: openaiBackground,
+        moderation: openaiModeration,
+        n: 1,
+      });
+      if (results.length === 0) {
+        throw new Error('OpenAI returned no images for the edit request.');
+      }
+      return results[0];
+    };
+  }, [
+    apiProvider,
+    openaiApiKey,
+    openaiBaseUrl,
+    openaiQuality,
+    openaiOutputFormat,
+    openaiBackground,
+    openaiModeration,
+  ]);
+
   const handleStartCrop = useCallback(
     (elementId: string) => {
       const element = elements.find((el) => el.id === elementId);
@@ -954,8 +1514,16 @@ const App: React.FC = () => {
     async (prompt: string) => {
       if (!outpaintingState) return;
 
-      const genAI = getAi();
-      if (!genAI) return;
+      const isOpenAi = apiProvider === 'openai';
+      const genAI = isOpenAi ? null : getAi();
+      if (!isOpenAi && !genAI) return;
+      if (isOpenAi && !openaiApiKey) {
+        setAiErrorMessage({
+          en: 'OpenAI API Key is missing. Please check your model settings.',
+          zh: '找不到 OpenAI API Key，請在模型設定中輸入。',
+        });
+        return;
+      }
 
       setIsGenerating(true);
       cancelGenerationRef.current = false;
@@ -992,6 +1560,53 @@ const App: React.FC = () => {
         );
 
         const taskImageB64 = taskCanvas.toDataURL('image/png');
+
+        if (isOpenAi) {
+          const finalPrompt = `Outpaint this image by filling the transparent surrounding region to naturally and seamlessly extend the scene. User guidance: "${prompt || 'Continue the scene naturally.'}"`;
+          const maskDataUrl =
+            await generateOpenaiMaskFromTransparency(taskImageB64);
+          console.log('[API Request] OpenAI Outpainting:', {
+            model: 'gpt-image-2',
+            prompt: finalPrompt,
+            frame,
+          });
+          const results = await openaiEditImage({
+            baseUrl: openaiBaseUrl,
+            apiKey: openaiApiKey,
+            imageBlob: dataUrlToBlob(taskImageB64),
+            maskBlob: dataUrlToBlob(maskDataUrl),
+            prompt: finalPrompt,
+            size: 'auto',
+            quality: openaiQuality,
+            outputFormat: openaiOutputFormat,
+            background: openaiBackground,
+            moderation: openaiModeration,
+            n: 1,
+          });
+          if (cancelGenerationRef.current) return;
+          if (results.length === 0) {
+            throw new Error('OpenAI returned no outpainting result.');
+          }
+          const updatedElement: ImageElement = {
+            ...element,
+            src: results[0],
+            position: { ...frame.position },
+            width: frame.width,
+            height: frame.height,
+          };
+          setElements((prev) =>
+            prev.map((el) => (el.id === element.id ? updatedElement : el)),
+          );
+          setUsageStats((prev) => ({
+            ...prev,
+            generatedImages: prev.generatedImages + 1,
+          }));
+          return;
+        }
+
+        if (!genAI) {
+          throw new Error('Gemini AI is not initialized for outpainting.');
+        }
         const [header, data] = taskImageB64.split(',');
         const mimeType = header.match(/data:(.*);base64/)?.[1] || 'image/png';
         const imagePart = { inlineData: { data, mimeType } };
@@ -1070,7 +1685,19 @@ const App: React.FC = () => {
         setOutpaintingState(null);
       }
     },
-    [outpaintingState, getAi, setElements, handleAiError],
+    [
+      outpaintingState,
+      getAi,
+      setElements,
+      handleAiError,
+      apiProvider,
+      openaiApiKey,
+      openaiBaseUrl,
+      openaiQuality,
+      openaiOutputFormat,
+      openaiBackground,
+      openaiModeration,
+    ],
   );
 
   const handleAutoPromptGenerate = useCallback(
@@ -1360,22 +1987,30 @@ const App: React.FC = () => {
         const count = Number(generationCount) || 1;
 
         if (apiProvider === 'openai') {
-          const openaiAspectRatioMap: Record<string, string> = {
-            '1:1': '1024x1024',
-            '3:4': '1024x1024',
-            '4:3': '1024x1024',
-            '9:16': '1024x1792',
-            '16:9': '1792x1024',
-            auto: '1024x1024',
-          };
-          const size = openaiAspectRatioMap[imageAspectRatio] || '1024x1024';
+          const size = computeOpenaiSize(imageAspectRatio, imageSize);
+          console.log(
+            `[OpenAI size] aspect=${imageAspectRatio}, tier=${imageSize} -> ${size}`,
+          );
+          if (size === 'auto') {
+            console.warn(
+              '[OpenAI size] sending "auto" — the model (or third-party proxy) will pick the dimensions. Pick an explicit aspect ratio + tier to get a concrete size.',
+            );
+          }
 
-          const requestBody = {
-            model: 'gpt-image-1.5',
+          const requestBody: Record<string, unknown> = {
+            model: 'gpt-image-2',
             prompt: finalInstructions || 'Generate an image',
             n: count,
             size: size,
+            quality: openaiQuality,
+            output_format: openaiOutputFormat,
+            background: openaiBackground,
+            moderation: openaiModeration,
           };
+          // output_compression is only valid for jpeg/webp outputs
+          if (openaiOutputFormat !== 'png') {
+            requestBody.output_compression = 90;
+          }
           console.log('[API Request] OpenAI Image Generation:', requestBody);
 
           const response = await fetch(
@@ -1405,10 +2040,16 @@ const App: React.FC = () => {
           console.log('[API Response] OpenAI Image Generation:', data);
           if (cancelGenerationRef.current) return;
 
+          const responseMime =
+            openaiOutputFormat === 'jpeg'
+              ? 'image/jpeg'
+              : openaiOutputFormat === 'webp'
+                ? 'image/webp'
+                : 'image/png';
           const validImages = await Promise.all(
             data.data.map(async (item: any) => {
               if (item.b64_json)
-                return `data:image/png;base64,${item.b64_json}`;
+                return `data:${responseMime};base64,${item.b64_json}`;
               if (item.url) {
                 try {
                   const imgRes = await fetch(item.url);
@@ -1595,6 +2236,10 @@ const App: React.FC = () => {
       apiProvider,
       openaiApiKey,
       openaiBaseUrl,
+      openaiQuality,
+      openaiOutputFormat,
+      openaiBackground,
+      openaiModeration,
       generationCount,
       elements,
       generationGoogleSearch,
@@ -2671,11 +3316,11 @@ const App: React.FC = () => {
         let resultJson: any;
 
         if (optimizationProvider === 'gemini') {
-          const genAI = getAi();
+          const genAI = getEffectiveGeminiAi();
           if (!genAI) {
             setAiErrorMessage({
-              en: 'Gemini API Key is missing. Please check your model settings.',
-              zh: '找不到 Gemini API Key，請在模型設定中輸入。',
+              en: 'Gemini API Key is missing. Please fill it under the Optimization panel or Model Selection.',
+              zh: '找不到 Gemini API Key，請在文字 AI 設定或模型選擇中輸入。',
             });
             setAnalyzingElementId(null);
             return;
@@ -2731,79 +3376,39 @@ const App: React.FC = () => {
           console.log('[API Response] Gemini Analyze Image:', response.text);
           resultJson = JSON.parse(response.text);
         } else {
-          if (!optimizationOpenaiApiKey) {
+          const { apiKey, baseUrl } = getEffectiveOpenaiConfig();
+          if (!apiKey) {
             setAiErrorMessage({
-              en: 'OpenAI API Key for optimization is missing.',
-              zh: '找不到 OpenAI API Key，請在模型設定中輸入。',
+              en: 'OpenAI API Key is missing. Please fill it under the Optimization panel (or Model Selection if you are using OpenAI for image generation too).',
+              zh: '找不到 OpenAI API Key，請在文字 AI 設定中輸入（若生圖也用 OpenAI 則共用模型選擇的 Key）。',
             });
             setAnalyzingElementId(null);
             return;
           }
-          const requestBody: any = {
-            model: optimizationOpenaiModel,
-            messages: [
-              {
-                role: 'system',
-                content:
-                  "You are an expert AI prompt engineer. Use High Level thinking to analyze this image. Provide a detailed description and 2-3 creative style or composition suggestions to help optimize a prompt for image generation. Return JSON with 'description' (string) and 'suggestions' (array of strings).",
-              },
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: 'Analyze this image.' },
-                  { type: 'image_url', image_url: { url: element.src } },
-                ],
-              },
-            ],
-            response_format: { type: 'json_object' },
-          };
-          if (optimizationThinkingLevel !== 'none') {
-            requestBody.reasoning = { effort: optimizationThinkingLevel };
-          }
-          console.log('[API Request] OpenAI Analyze Image:', {
-            ...requestBody,
-            messages: requestBody.messages.map((m) =>
-              m.role === 'user'
-                ? {
-                    ...m,
-                    content: (m.content as any[]).map((c) =>
-                      c.type === 'image_url'
-                        ? {
-                            type: 'image_url',
-                            image_url: { url: '[BASE64_IMAGE_DATA]' },
-                          }
-                        : c,
-                    ),
-                  }
-                : m,
-            ),
-          });
-
-          const response = await fetch(
-            `${optimizationOpenaiBaseUrl.replace(/\/$/, '')}/chat/completions`,
+          console.log(
+            `[API Request] OpenAI Analyze Image (${optimizationOpenaiEndpoint}):`,
             {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${optimizationOpenaiApiKey}`,
-              },
-              body: JSON.stringify(requestBody),
+              model: optimizationOpenaiModel,
+              endpoint: optimizationOpenaiEndpoint,
+              imageRef: '[BASE64_IMAGE_DATA]',
             },
           );
-          if (!response.ok) {
-            const errData = await response.json().catch(() => null);
-            console.error(
-              '[API Error] OpenAI Analyze Image:',
-              errData || response.statusText,
-            );
-            throw new Error(
-              `OpenAI API Error: ${response.status} ${errData ? JSON.stringify(errData) : response.statusText}`,
-            );
-          }
-          const dataResponse = await response.json();
-          console.log('[API Response] OpenAI Analyze Image:', dataResponse);
-          let content = dataResponse.choices[0].message.content;
-          content = content
+          const rawContent = await callOpenaiTextAPI({
+            baseUrl,
+            apiKey,
+            endpoint: optimizationOpenaiEndpoint,
+            model: optimizationOpenaiModel,
+            systemPrompt:
+              "You are an expert AI prompt engineer. Use High Level thinking to analyze this image. Provide a detailed description and 2-3 creative style or composition suggestions to help optimize a prompt for image generation. Return JSON with 'description' (string) and 'suggestions' (array of strings).",
+            userText: 'Analyze this image.',
+            imageUrl: element.src,
+            reasoningEffort:
+              optimizationThinkingLevel !== 'none'
+                ? optimizationThinkingLevel
+                : undefined,
+            jsonMode: true,
+          });
+          const content = rawContent
             .replace(/```json/g, '')
             .replace(/```/g, '')
             .trim();
@@ -2831,15 +3436,15 @@ const App: React.FC = () => {
       }
     },
     [
-      getAi,
+      getEffectiveGeminiAi,
+      getEffectiveOpenaiConfig,
       elements,
       handleAiError,
       optimizationProvider,
       optimizationModel,
       optimizationGrounding,
       optimizationThinkingLevel,
-      optimizationOpenaiBaseUrl,
-      optimizationOpenaiApiKey,
+      optimizationOpenaiEndpoint,
       optimizationOpenaiModel,
     ],
   );
@@ -2854,11 +3459,11 @@ const App: React.FC = () => {
         let resultJson: any;
 
         if (optimizationProvider === 'gemini') {
-          const genAI = getAi();
+          const genAI = getEffectiveGeminiAi();
           if (!genAI) {
             setAiErrorMessage({
-              en: 'Gemini API Key is missing. Please check your model settings.',
-              zh: '找不到 Gemini API Key，請在模型設定中輸入。',
+              en: 'Gemini API Key is missing. Please fill it under the Optimization panel or Model Selection.',
+              zh: '找不到 Gemini API Key，請在文字 AI 設定或模型選擇中輸入。',
             });
             setAnalyzingElementId(null);
             return;
@@ -2896,59 +3501,38 @@ const App: React.FC = () => {
           console.log('[API Response] Gemini Optimize Note:', response.text);
           resultJson = JSON.parse(response.text);
         } else {
-          if (!optimizationOpenaiApiKey) {
+          const { apiKey, baseUrl } = getEffectiveOpenaiConfig();
+          if (!apiKey) {
             setAiErrorMessage({
-              en: 'OpenAI API Key for optimization is missing.',
-              zh: '找不到 OpenAI API Key，請在模型設定中輸入。',
+              en: 'OpenAI API Key is missing. Please fill it under the Optimization panel (or Model Selection if you are using OpenAI for image generation too).',
+              zh: '找不到 OpenAI API Key，請在文字 AI 設定中輸入（若生圖也用 OpenAI 則共用模型選擇的 Key）。',
             });
             setAnalyzingElementId(null);
             return;
           }
-          const requestBody: any = {
-            model: optimizationOpenaiModel,
-            messages: [
-              {
-                role: 'system',
-                content:
-                  "You are an expert AI prompt engineer. Use High Level thinking to optimize the prompt for image generation. Return JSON with 'description' (string) and 'suggestions' (array of strings).",
-              },
-              {
-                role: 'user',
-                content: element.content,
-              },
-            ],
-            response_format: { type: 'json_object' },
-          };
-          if (optimizationThinkingLevel !== 'none') {
-            requestBody.reasoning = { effort: optimizationThinkingLevel };
-          }
-          console.log('[API Request] OpenAI Optimize Note:', requestBody);
-
-          const response = await fetch(
-            `${optimizationOpenaiBaseUrl.replace(/\/$/, '')}/chat/completions`,
+          console.log(
+            `[API Request] OpenAI Optimize Note (${optimizationOpenaiEndpoint}):`,
             {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${optimizationOpenaiApiKey}`,
-              },
-              body: JSON.stringify(requestBody),
+              model: optimizationOpenaiModel,
+              endpoint: optimizationOpenaiEndpoint,
+              content: element.content,
             },
           );
-          if (!response.ok) {
-            const errData = await response.json().catch(() => null);
-            console.error(
-              '[API Error] OpenAI Optimize Note:',
-              errData || response.statusText,
-            );
-            throw new Error(
-              `OpenAI API Error: ${response.status} ${errData ? JSON.stringify(errData) : response.statusText}`,
-            );
-          }
-          const dataResponse = await response.json();
-          console.log('[API Response] OpenAI Optimize Note:', dataResponse);
-          let content = dataResponse.choices[0].message.content;
-          content = content
+          const rawContent = await callOpenaiTextAPI({
+            baseUrl,
+            apiKey,
+            endpoint: optimizationOpenaiEndpoint,
+            model: optimizationOpenaiModel,
+            systemPrompt:
+              "You are an expert AI prompt engineer. Use High Level thinking to optimize the prompt for image generation. Return JSON with 'description' (string) and 'suggestions' (array of strings).",
+            userText: element.content,
+            reasoningEffort:
+              optimizationThinkingLevel !== 'none'
+                ? optimizationThinkingLevel
+                : undefined,
+            jsonMode: true,
+          });
+          const content = rawContent
             .replace(/```json/g, '')
             .replace(/```/g, '')
             .trim();
@@ -2971,15 +3555,15 @@ const App: React.FC = () => {
       }
     },
     [
-      getAi,
+      getEffectiveGeminiAi,
+      getEffectiveOpenaiConfig,
       elements,
       handleAiError,
       optimizationProvider,
       optimizationModel,
       optimizationGrounding,
       optimizationThinkingLevel,
-      optimizationOpenaiBaseUrl,
-      optimizationOpenaiApiKey,
+      optimizationOpenaiEndpoint,
       optimizationOpenaiModel,
     ],
   );
@@ -3071,6 +3655,9 @@ const App: React.FC = () => {
             <h1 className="text-xl font-black text-blue-600 flex items-center gap-1">
               <span className="text-2xl">🍌</span> {t('infiniteCanvas')}
             </h1>
+            <p className="text-[10px] text-emerald-600 uppercase tracking-widest font-black">
+              GPT IMAGE 2
+            </p>
             <p className="text-[10px] text-blue-500 uppercase tracking-widest font-black">
               Nano Banana 2 | Nano Banana Pro
             </p>
@@ -3119,6 +3706,75 @@ const App: React.FC = () => {
                 onChange={(e) => setOpenaiApiKey(e.target.value)}
                 className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700"
               />
+
+              <select
+                value={openaiQuality}
+                onChange={(e) =>
+                  setOpenaiQuality(e.target.value as typeof openaiQuality)
+                }
+                className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700"
+                aria-label={t('openaiQualityLabel')}
+              >
+                <option value="auto">
+                  {t('openaiQualityLabel')}: {t('openaiQualityAuto')}
+                </option>
+                <option value="low">
+                  {t('openaiQualityLabel')}: {t('openaiQualityLow')}
+                </option>
+                <option value="medium">
+                  {t('openaiQualityLabel')}: {t('openaiQualityMedium')}
+                </option>
+                <option value="high">
+                  {t('openaiQualityLabel')}: {t('openaiQualityHigh')}
+                </option>
+              </select>
+
+              <select
+                value={openaiOutputFormat}
+                onChange={(e) =>
+                  setOpenaiOutputFormat(
+                    e.target.value as typeof openaiOutputFormat,
+                  )
+                }
+                className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700"
+                aria-label={t('openaiFormatLabel')}
+              >
+                <option value="png">{t('openaiFormatLabel')}: PNG</option>
+                <option value="jpeg">{t('openaiFormatLabel')}: JPEG</option>
+                <option value="webp">{t('openaiFormatLabel')}: WebP</option>
+              </select>
+
+              <select
+                value={openaiBackground}
+                onChange={(e) =>
+                  setOpenaiBackground(e.target.value as typeof openaiBackground)
+                }
+                className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700"
+                aria-label={t('openaiBackgroundLabel')}
+              >
+                <option value="auto">
+                  {t('openaiBackgroundLabel')}: {t('openaiBackgroundAuto')}
+                </option>
+                <option value="opaque">
+                  {t('openaiBackgroundLabel')}: {t('openaiBackgroundOpaque')}
+                </option>
+              </select>
+
+              <select
+                value={openaiModeration}
+                onChange={(e) =>
+                  setOpenaiModeration(e.target.value as typeof openaiModeration)
+                }
+                className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700"
+                aria-label={t('openaiModerationLabel')}
+              >
+                <option value="low">
+                  {t('openaiModerationLabel')}: {t('openaiModerationLow')}
+                </option>
+                <option value="auto">
+                  {t('openaiModerationLabel')}: {t('openaiModerationAuto')}
+                </option>
+              </select>
             </>
           )}
 
@@ -3140,7 +3796,7 @@ const App: React.FC = () => {
           )}
           <p className="text-[10px] text-center mt-1.5 text-gray-500 font-medium">
             {apiProvider === 'openai'
-              ? '使用 gpt-image-1.5'
+              ? t('usingGptImage2')
               : generationModel === 'flash'
                 ? t('usingFlash')
                 : t('usingPro')}
@@ -3212,30 +3868,121 @@ const App: React.FC = () => {
                   Gemini 3.1 Pro
                 </button>
               </div>
+
+              {apiProvider === 'custom_gemini' && (
+                <p className="text-[10px] text-gray-500 mb-2 leading-relaxed">
+                  {t('geminiOptimizationSharesKey')}
+                </p>
+              )}
+              {apiProvider === 'builtin' && (
+                <p className="text-[10px] text-gray-500 mb-2 leading-relaxed">
+                  {t('geminiOptimizationUsesBuiltin')}
+                </p>
+              )}
+              {apiProvider === 'openai' && (
+                <>
+                  <p className="text-[10px] text-amber-600 mb-2 leading-relaxed">
+                    {t('geminiOptimizationNeedsOwnKey')}
+                  </p>
+                  <input
+                    type="password"
+                    placeholder={t('geminiApiKeyPlaceholder')}
+                    value={optimizationGeminiKey}
+                    onChange={(e) => setOptimizationGeminiKey(e.target.value)}
+                    className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700"
+                  />
+                </>
+              )}
             </>
           ) : (
             <>
+              {apiProvider === 'openai' ? (
+                <p className="text-[10px] text-gray-500 mb-2 leading-relaxed">
+                  {t('openaiOptimizationSharesKey')}
+                </p>
+              ) : (
+                <>
+                  <p className="text-[10px] text-amber-600 mb-2 leading-relaxed">
+                    {t('openaiOptimizationNeedsOwnKey')}
+                  </p>
+                  <input
+                    type="text"
+                    placeholder={t('openaiBaseUrlPlaceholder')}
+                    value={optimizationOpenaiBaseUrl}
+                    onChange={(e) =>
+                      setOptimizationOpenaiBaseUrl(e.target.value)
+                    }
+                    className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700"
+                  />
+                  <input
+                    type="password"
+                    placeholder={t('openaiApiKeyPlaceholder')}
+                    value={optimizationOpenaiApiKey}
+                    onChange={(e) =>
+                      setOptimizationOpenaiApiKey(e.target.value)
+                    }
+                    className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700"
+                  />
+                </>
+              )}
+
+              <select
+                value={optimizationOpenaiEndpoint}
+                onChange={(e) =>
+                  setOptimizationOpenaiEndpoint(
+                    e.target.value as typeof optimizationOpenaiEndpoint,
+                  )
+                }
+                className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700"
+                aria-label={t('openaiEndpointLabel')}
+              >
+                <option value="responses">
+                  {t('openaiEndpointResponses')}
+                </option>
+                <option value="chat_completions">
+                  {t('openaiEndpointChatCompletions')}
+                </option>
+              </select>
+
               <input
                 type="text"
-                placeholder="Base URL (預設: https://api.openai.com/v1)"
-                value={optimizationOpenaiBaseUrl}
-                onChange={(e) => setOptimizationOpenaiBaseUrl(e.target.value)}
-                className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700"
-              />
-              <input
-                type="password"
-                placeholder="API Key"
-                value={optimizationOpenaiApiKey}
-                onChange={(e) => setOptimizationOpenaiApiKey(e.target.value)}
-                className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700"
-              />
-              <input
-                type="text"
-                placeholder="Model Name (預設: gpt-4o)"
+                list="openai-model-suggestions"
+                placeholder={t('openaiModelInputPlaceholder')}
                 value={optimizationOpenaiModel}
                 onChange={(e) => setOptimizationOpenaiModel(e.target.value)}
                 className="w-full text-xs p-1.5 mb-2 border rounded bg-white text-gray-700"
               />
+              <datalist id="openai-model-suggestions">
+                {openaiAvailableModels.map((modelId) => (
+                  <option key={modelId} value={modelId} />
+                ))}
+              </datalist>
+
+              <button
+                type="button"
+                onClick={handleFetchOpenaiModels}
+                disabled={
+                  isFetchingOpenaiModels ||
+                  !getEffectiveOpenaiConfig().apiKey
+                }
+                className={`w-full text-[11px] font-bold py-1.5 rounded transition-all ${
+                  isFetchingOpenaiModels ||
+                  !getEffectiveOpenaiConfig().apiKey
+                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {isFetchingOpenaiModels
+                  ? t('fetchingModels')
+                  : openaiAvailableModels.length > 0
+                    ? `✓ ${openaiAvailableModels.length} models · ${t('fetchModels')}`
+                    : t('fetchModels')}
+              </button>
+              {openaiModelsFetchError && (
+                <p className="text-[10px] text-red-500 mt-1 leading-relaxed">
+                  {t('fetchModelsFailed')}: {openaiModelsFetchError}
+                </p>
+              )}
             </>
           )}
         </div>
@@ -3809,6 +4556,7 @@ const App: React.FC = () => {
         onSetGenerationImageSearch={setGenerationImageSearch}
         generationThinkingLevel={generationThinkingLevel}
         onSetGenerationThinkingLevel={setGenerationThinkingLevel}
+        apiProvider={apiProvider}
         usageStats={usageStats}
         snapToGrid={snapToGrid}
         onUrlDrop={addIFrame}
@@ -3917,6 +4665,7 @@ const App: React.FC = () => {
           getAi={getAi}
           handleAiError={handleAiError}
           t={t}
+          runInpaintExternal={openaiInpaintCallback}
         />
       )}
       {croppingImage && (

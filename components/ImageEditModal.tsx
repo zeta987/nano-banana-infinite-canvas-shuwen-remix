@@ -88,6 +88,14 @@ interface ImageEditModalProps {
   getAi: () => GoogleGenAI | null;
   handleAiError: (error: any) => Promise<boolean>;
   t: (key: string) => string;
+  // When provided, overrides the built-in Gemini call with an external AI path
+  // (e.g. OpenAI /v1/images/edits). Must return a data URL for the new image.
+  runInpaintExternal?: (params: {
+    baseImageSrc: string;
+    maskDataUrl: string;
+    prompt: string;
+    type: 'remove' | 'edit';
+  }) => Promise<string>;
 }
 
 interface GenerationContext {
@@ -166,6 +174,7 @@ export const ImageEditModal: React.FC<ImageEditModalProps> = ({
   getAi,
   handleAiError,
   t,
+  runInpaintExternal,
 }) => {
   const imageRef = useRef<HTMLImageElement>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -783,6 +792,25 @@ export const ImageEditModal: React.FC<ImageEditModalProps> = ({
   ]);
 
   const runGeneration = async (context: GenerationContext) => {
+    // External AI path (e.g. OpenAI /v1/images/edits) — skip Gemini entirely.
+    if (runInpaintExternal) {
+      setIsLoading(true);
+      try {
+        const resultDataUrl = await runInpaintExternal({
+          baseImageSrc: context.baseImageSrc,
+          maskDataUrl: context.maskDataUrl,
+          prompt: context.prompt,
+          type: context.type,
+        });
+        setPreviewImageSrc(resultDataUrl);
+      } catch (error) {
+        handleAiError(error);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
     const ai = getAi();
     if (!ai) return;
 

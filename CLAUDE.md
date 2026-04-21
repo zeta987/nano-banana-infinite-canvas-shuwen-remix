@@ -87,9 +87,11 @@ All AI model names are **hardcoded** in App.tsx (no config abstraction):
 | Image generation (Flash) | `gemini-3.1-flash-image-preview` |
 | Image generation (Pro) | `gemini-3-pro-image-preview` |
 | Analysis / Optimization | `gemini-3-flash-preview` or `gemini-3.1-pro-preview` |
-| Inpainting / Outpainting | `gemini-2.5-flash-image` |
+| Inpainting / Outpainting (Gemini) | `gemini-2.5-flash-image` |
 | Error explanation / Translation | `gemini-3-flash-preview` |
-| OpenAI generation | `gpt-image-1.5` (via raw fetch, no SDK) |
+| OpenAI generation | `gpt-image-2` via `/v1/images/generations` (raw fetch, JSON body) |
+| OpenAI inpainting / outpainting | `gpt-image-2` via `/v1/images/edits` (raw fetch, `multipart/form-data`) |
+| OpenAI analyze / optimize (text) | User-picked model (default `gpt-5.4`) via `/v1/responses` (raw fetch). Uses Responses API shape: `input` array with `input_text` / `input_image` parts, `instructions` for system prompt, `text.format` for JSON mode, `reasoning.effort` for reasoning models. |
 
 Generation pipeline: validate API key → gather selected elements (notes as text, images as base64, iframes as context) → branch by provider → parallel `Promise.all` for multiple images → store base64 data URLs in `generationHistory`.
 
@@ -118,3 +120,13 @@ Inline `translations` object (~200+ keys) with `t(key)` callback passed via prop
 - Multi-element drag freezes start positions in a ref on first frame. The freeze snapshot won't reflect elements added/removed during drag.
 - `handleInteractionEnd` always commits a history snapshot even for zero-delta clicks, creating undo steps with no visible change.
 - Language toggle only updates the three initial memo notes (id 1/2/3), and only if their content still matches the original constant strings.
+- **OpenAI mask convention is inverted vs Gemini**: OpenAI `/v1/images/edits` treats **transparent pixels as "edit here"** and opaque pixels as "preserve", while the current Gemini pipeline composites a semi-transparent red mask *onto* the base image. `generateOpenaiMaskFromDrawn` (inpaint) and `generateOpenaiMaskFromTransparency` (outpaint) in `App.tsx` handle the conversion.
+- `gpt-image-2` does **not** support transparent backgrounds — only `background: 'opaque' | 'auto'`. Setting `background: 'transparent'` is rejected by the API.
+- `moderation` parameter defaults to `'low'` in this app (looser content filter). The OpenAI API default is `'auto'` (stricter). Both generation and edits requests pass this value.
+- `gpt-image-2` `/v1/images/edits` uses `multipart/form-data`. Do **not** manually set the `Content-Type` header when calling `fetch`; the browser must add the boundary.
+- **Cross-provider credentials (image gen ≠ text optimization)**: generation and optimization can pick different providers. Credentials are resolved by two helpers in App.tsx:
+  - `getEffectiveOpenaiConfig()` — when `apiProvider === 'openai'`, shares `openaiApiKey` / `openaiBaseUrl`; otherwise reads dedicated `optimizationOpenaiApiKey` / `optimizationOpenaiBaseUrl` state.
+  - `getEffectiveGeminiAi()` — when `apiProvider === 'openai'` and the user supplied `optimizationGeminiKey`, uses it; else falls back to `getAi()` (which honors `customGeminiKey` or the built-in env key).
+  The Optimization panel conditionally renders input fields based on the (generation provider, optimization provider) combo so the user never has to re-enter shared keys, but always has a place to fill dedicated ones.
+- **OpenAI text endpoint is switchable** via `optimizationOpenaiEndpoint: 'responses' | 'chat_completions'`. `callOpenaiTextAPI` helper handles both shapes (Responses API: `input`+`instructions`+`input_text/input_image`; Chat Completions: `messages`+`text/image_url`). Responses is the default.
+- Optimization model picker uses `<input list>` + `<datalist>` — the "Fetch available models" button calls `GET /v1/models` against the effective OpenAI base URL (shared or dedicated) and populates the datalist. Users can still type any model name manually (for self-hosted / proxy backends that do not expose `/v1/models`).

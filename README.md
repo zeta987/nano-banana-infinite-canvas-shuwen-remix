@@ -1,8 +1,8 @@
 [English](README.md) | [正體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
 
-# Nano Banana Infinite Canvas (Shuwen Remix)
+# Infinite Canvas · GPT IMAGE 2 · Nano Banana 2 / Pro (Shuwen Remix)
 
-A third-stage remix of Nano Banana Infinite Canvas, combining an infinite canvas workflow with Gemini 3 image generation, prompt optimization, webpage embedding, and bilingual UI improvements.
+An infinite-canvas creative tool with **OpenAI GPT IMAGE 2** as the flagship image engine, backed up by **Nano Banana 2 / Nano Banana Pro (Gemini 3)**. Combines prompt optimization (OpenAI Responses API or Chat Completions, and Gemini), mask-based inpainting, outpainting, webpage embedding, and a bilingual UI.
 
 ![English home view screenshot](https://github.com/user-attachments/assets/e113b2de-72e6-4ed6-b1e7-bd93fd6a7591)
 
@@ -31,17 +31,20 @@ This repository builds on the 述文老師學習網 adaptation of @Prompt_case's
 
 ## What's New in This Remix
 
-- **Google Search Grounding:** Enrich image generation with context from Google Search and Google Image Search.
-- **Embedded Webpages:** Add iframes to the canvas and use viewport or full-page context in generation workflows.
-- **Generation History Panel:** Reuse recent image outputs without cluttering the main workspace.
-- **Bilingual UI:** Refined English and Traditional Chinese interface coverage.
-- **Reference Limit Guidance:** Added model-specific guidance for Banana 2 and Banana Pro usage limits.
+- **GPT IMAGE 2 Support (Flagship):** Full OpenAI `gpt-image-2` integration for `/v1/images/generations` and `/v1/images/edits` (mask-based inpainting / outpainting). Supports the full parameter surface: `quality`, `output_format`, `background`, `moderation` (defaults to `low` in this app), plus every official size preset (1K / 2K / 2K landscape / 4K landscape / 4K portrait) and custom sizes matching the official constraints.
+- **Aspect Ratio Matrix:** Canvas aspect-ratio picker covers 11 ratios (21:9 / 16:9 / 4:3 / 3:2 / 5:4 / 1:1 / 9:21 / 9:16 / 3:4 / 2:3 / 4:5 + auto), each mapped to a gpt-image-2 compatible resolution per tier.
+- **OpenAI Text AI (Responses + Chat Completions):** Optimization & analysis can hit either `/v1/responses` (default) or `/v1/chat/completions`. Built-in model picker auto-fetches from `/v1/models`, with manual fallback for self-hosted backends.
+- **Cross-Provider Credentials:** Image generation and text optimization can pick different providers without re-entering keys. Shared credentials when the providers match; dedicated input fields when they don't.
+- **Nano Banana 2 / Nano Banana Pro (Gemini 3):** Still fully supported with Google Search grounding, image search, and multi-level reasoning.
+- **Embedded Webpages, Generation History, Bilingual UI:** Retained and polished from the previous remix.
 
 ## Core Features
 
 - **Infinite Canvas:** Pan, zoom, select, and arrange objects freely.
 - **Rich Elements:** Add notes, arrows, drawings, shapes, images, and webpage embeds.
-- **AI Image Generation:** Generate images directly from selected canvas context.
+- **AI Image Generation:** Generate images directly from selected canvas context via any of:
+  - **GPT IMAGE 2** (flagship) — OpenAI `/v1/images/generations`, with full native size coverage (1K / 2K / 4K) for every aspect ratio.
+  - **Nano Banana 2 / Nano Banana Pro** (Gemini 3) — with Google Search / Image Search grounding.
   - *Note:* Nano Banana 2 supports `Minimal` and `High` thinking levels (defaults to `High`). Nano Banana Pro does not expose a configurable thinking-level option.
 - **AI Text Tools:** Prompt optimization, analysis, and related text AI workflows are grouped under a dedicated text-AI section.
 - **AI Editing Workflows:** Support outpainting and image-focused generation workflows.
@@ -50,13 +53,17 @@ This repository builds on the 述文老師學習網 adaptation of @Prompt_case's
 
 ## AI Model Configuration Notes
 
+### Image Models
+- **GPT IMAGE 2 (OpenAI, flagship):** Fed via `/v1/images/generations` (and `/v1/images/edits` for mask-based inpainting / outpainting). Exposes `quality` (auto/low/medium/high), `output_format` (png/jpeg/webp), `background` (auto/opaque), and `moderation` (auto/low — this app defaults to `low`).
+- **Nano Banana 2 / Pro (Google Gemini 3):** `gemini-3.1-flash-image-preview` and `gemini-3-pro-image-preview`, with optional Google Search / Image Search grounding.
+
 ### Text AI Models
+- **OpenAI Text AI:** Switchable between `/v1/responses` (default) and `/v1/chat/completions`. Built-in model picker supports auto-fetch via `/v1/models` plus manual model name entry. Supports `none`, `low`, `medium`, `high`, and `xhigh` reasoning.
+  - *Important:* When `none` is selected, the reasoning-effort parameter is omitted entirely to avoid compatibility issues with providers that do not support it.
 - **Gemini Text AI:** Defaults to `High` reasoning for prompt optimization and image analysis.
-- **Gemini Model Selector:** The text-AI section uses a dedicated model selector:
+- **Gemini Model Selector:**
   - **Gemini 3 Flash:** Supports `Minimal`, `Low`, `Medium`, and `High` (defaults to `High`).
   - **Gemini 3 Pro:** Supports `Low`, `Medium`, and `High` (defaults to `High`).
-- **OpenAI-Compatible Text AI:** Supports `none`, `low`, `medium`, `high`, and `xhigh`.
-  - *Important:* When `none` is selected, the reasoning-effort parameter is omitted entirely to avoid compatibility issues with providers that do not support it.
 
 ### Environment Setup
 - The Vite config maps `GEMINI_API_KEY` to the runtime key for the built-in Gemini provider.
@@ -86,7 +93,7 @@ This project follows a three-stage lineage:
    *Contribution:* Gemini model upgrades, prompt-analysis improvements, Traditional Chinese localization, and teaching-oriented workflow refinements.
    *Link:* [Article and version overview](https://harmonica80.blogspot.com/2025/12/ainano-banana-infinite-canvas-gemini-3.html)
 3. **Current Remix:** This repository
-   *Contribution:* Google Search grounding, webpage iframe support, generation history panel, UI refinement, and workflow tuning.
+   *Contribution:* **OpenAI GPT IMAGE 2 integration** (generation + mask-based edits + outpainting), OpenAI Responses API text AI, cross-provider credential handling, aspect-ratio matrix expansion (11 ratios × 4 tiers), Google Search grounding, webpage iframe support, generation history panel, UI refinement, and workflow tuning.
 
 ## Rights and Licensing
 

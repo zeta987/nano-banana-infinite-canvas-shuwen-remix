@@ -401,12 +401,7 @@ export const DrawingModal: React.FC<DrawingModalProps> = ({
   );
 
   const drawShape = useCallback(
-    (
-      ctx: CanvasRenderingContext2D,
-      shape: Tool,
-      start: Point,
-      end: Point,
-    ) => {
+    (ctx: CanvasRenderingContext2D, shape: Tool, start: Point, end: Point) => {
       ctx.strokeStyle = color;
       ctx.lineWidth = brushSize;
       ctx.globalCompositeOperation = 'source-over';

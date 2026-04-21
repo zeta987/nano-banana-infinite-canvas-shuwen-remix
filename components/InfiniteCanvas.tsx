@@ -1303,7 +1303,7 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
       Auto: ['auto'],
       Landscape: ['21:9', '16:9', '4:3', '3:2', '5:4'],
       Square: ['1:1'],
-      Portrait: ['9:16', '3:4', '2:3', '4:5'],
+      Portrait: ['9:21', '9:16', '3:4', '2:3', '4:5'],
     };
 
     const handleOutpaintingGenerateClick = (e: React.MouseEvent) => {

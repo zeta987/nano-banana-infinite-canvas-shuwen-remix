@@ -1,8 +1,8 @@
 [English](README.md) | [正體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
 
-# Nano Banana 無限畫布 (進階強化版)
+# 無限畫布 · GPT IMAGE 2 · Nano Banana 2 / Pro (進階強化版)
 
-這是一個結合無限畫布、Gemini 3 影像生成、AI 提示詞最佳化、網頁嵌入與雙語介面調整的視覺化創作工具。
+以 **OpenAI GPT IMAGE 2** 作為旗艦生圖引擎、搭配 **Nano Banana 2 / Nano Banana Pro (Gemini 3)** 的無限畫布創作工具。整合 OpenAI Responses API / Chat Completions 的提示詞最佳化、蒙版 inpainting、outpainting、網頁嵌入與中英文雙語介面。
 
 ![繁體中文首頁示意圖](https://github.com/user-attachments/assets/39f625f5-09ac-4848-b914-15d7c7fb48a8)
 
@@ -31,17 +31,20 @@
 
 ## 本次升級新增功能
 
-- **聯網生圖：** 生圖時可勾選 Google Search 與 Google Image Search，讓 Gemini 參考外部搜尋結果。
-- **網頁嵌入：** 畫布支援加入網頁 iframe，並可選擇以可見區域或整頁模式提供生成背景。
-- **生成歷史面板：** 集中保留近期生成的圖片，方便隨時重新加入畫布，保持工作區整潔。
-- **雙語介面最佳化：** 補強並潤飾現有的中英文介面文字。
-- **參考圖提示：** 新增 Banana 2 與 Banana Pro 的參考圖使用上限說明。
+- **GPT IMAGE 2 支援（旗艦）：** 完整串接 OpenAI `gpt-image-2` 的 `/v1/images/generations` 與 `/v1/images/edits`（支援蒙版 inpainting 與 outpainting）。完整暴露所有參數：`quality`、`output_format`、`background`、`moderation`（本專案預設為 `low`），並涵蓋官方全部尺寸 preset（1K / 2K / 2K landscape / 4K landscape / 4K portrait）以及符合官方約束的自訂尺寸。
+- **比例矩陣擴充：** 畫布比例選單涵蓋 11 種（21:9 / 16:9 / 4:3 / 3:2 / 5:4 / 1:1 / 9:21 / 9:16 / 3:4 / 2:3 / 4:5 + auto），每種在各 tier 下都會映射為合法的 gpt-image-2 尺寸。
+- **OpenAI 文字 AI（Responses + Chat Completions）：** 提示最佳化與分析可選擇 `/v1/responses`（預設）或 `/v1/chat/completions`。內建模型選單透過 `/v1/models` 自動獲取，也可手動輸入模型名稱（適用自架 backend）。
+- **跨 provider 憑證處理：** 生圖與文字最佳化可選用不同 provider 而不需重複輸入 key；provider 相同時共用憑證，不同時顯示專用輸入欄位。
+- **Nano Banana 2 / Nano Banana Pro（Gemini 3）：** 原有功能完整保留，支援 Google Search grounding、圖片搜尋與多段 reasoning。
+- **網頁嵌入、生成歷史面板、雙語介面：** 延續並潤飾前版。
 
 ## 核心功能
 
 - **無限畫布：** 支援平移、縮放、框選與多物件自由排版。
 - **多樣化元素：** 可加入便利貼、箭頭、幾何圖形、手繪內容、圖片與網頁嵌入物件。
-- **AI 影像生成：** 可直接使用選取的畫布內容作為上下文生成新圖片。
+- **AI 影像生成：** 可直接使用選取的畫布內容作為上下文生成新圖片，支援以下引擎：
+  - **GPT IMAGE 2**（旗艦） — OpenAI `/v1/images/generations`，涵蓋 1K / 2K / 4K 各比例的原生尺寸。
+  - **Nano Banana 2 / Nano Banana Pro**（Gemini 3）— 搭配 Google Search / 圖片搜尋 grounding。
   - *註：* Nano Banana 2 支援 `Minimal` 與 `High` 思考層級（預設為 `High`）；Nano Banana Pro 不支援調整思考層級。
 - **文字 AI 工具：** 提示最佳化、分析等功能已整合在獨立的「文字 AI」區塊中。
 - **AI 影像編輯：** 支援外擴生成與其他偏影像處理的工作流程。
@@ -50,13 +53,17 @@
 
 ## AI 模型設定說明
 
+### 影像模型
+- **GPT IMAGE 2（OpenAI，旗艦）：** 透過 `/v1/images/generations` 生圖、`/v1/images/edits` 做蒙版 inpainting 與 outpainting。暴露 `quality`（auto/low/medium/high）、`output_format`（png/jpeg/webp）、`background`（auto/opaque）、`moderation`（auto/low，本專案預設 `low`）。
+- **Nano Banana 2 / Pro（Google Gemini 3）：** `gemini-3.1-flash-image-preview` 與 `gemini-3-pro-image-preview`，支援 Google Search / 圖片搜尋 grounding。
+
 ### 文字 AI 模型
+- **OpenAI 文字 AI：** 可切換 `/v1/responses`（預設）或 `/v1/chat/completions`。內建模型選單透過 `/v1/models` 自動獲取，也可手動輸入模型名稱。支援 `none`、`low`、`medium`、`high`、`xhigh` reasoning。
+  - *重要：* 當選擇 `none` 時，系統會直接不傳遞 reasoning-effort 參數，以避免部分不支援此參數的相容模型發生錯誤。
 - **Gemini 文字 AI：** 進行提示最佳化與圖片分析等功能時，在 Gemini API 模式下預設採用 `High` 思維。
-- **Gemini 模型下拉選單：** 文字 AI 區塊有獨立的模型與思維設定：
+- **Gemini 模型下拉選單：**
   - **Gemini 3 Flash：** 支援 `Minimal`、`Low`、`Medium`、`High`（預設為 `High`）。
   - **Gemini 3 Pro：** 支援 `Low`、`Medium`、`High`（預設為 `High`）。
-- **OpenAI 相容文字 AI：** 支援 `none`、`low`、`medium`、`high`、`xhigh`。
-  - *重要：* 當選擇 `none` 時，系統會直接不傳遞 reasoning-effort 參數，以避免部分不支援此參數的相容模型發生錯誤。
 
 ### 環境設定
 - 本專案透過 Vite 設定，將 `GEMINI_API_KEY` 對映為內建 Gemini 流程使用的執行期金鑰。
@@ -86,7 +93,7 @@ npm run preview  # 預覽編譯後的版本
    *貢獻：* Gemini 模型升級、提示詞分析最佳化、繁體中文在地化，以及偏向教學情境的流程調整。
    *連結：* [教學文章與版本介紹](https://harmonica80.blogspot.com/2025/12/ainano-banana-infinite-canvas-gemini-3.html)
 3. **目前版本：** 本專案 Remix 版
-   *貢獻：* 加入 Google Search 聯網生圖、網頁 iframe 嵌入、生成歷史面板、介面雙語補強與工作流程微調。
+   *貢獻：* **串接 OpenAI GPT IMAGE 2**（生圖 + 蒙版編輯 + outpainting）、OpenAI Responses API 文字 AI、跨 provider 憑證處理、比例矩陣擴充（11 比例 × 4 tier）、Google Search 聯網生圖、網頁 iframe 嵌入、生成歷史面板、介面雙語補強與工作流程微調。
 
 ## 授權與權利說明
 
