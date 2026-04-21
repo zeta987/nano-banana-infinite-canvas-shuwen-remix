@@ -80,14 +80,17 @@ const OutpaintingFrame: React.FC<OutpaintingFrameProps> = ({
     [zoom, onUpdateFrame, outpaintingState.element],
   );
 
-  const handleInteractionEnd = useCallback(() => {
-    interactionRef.current = null;
-    window.removeEventListener('mousemove', handleInteractionMove);
-    window.removeEventListener('mouseup', handleInteractionEnd);
-    window.removeEventListener('touchmove', handleInteractionMove);
-    window.removeEventListener('touchend', handleInteractionEnd);
-    window.removeEventListener('touchcancel', handleInteractionEnd);
-  }, [handleInteractionMove]);
+  const handleInteractionEnd = useCallback(
+    function handleInteractionEndEvent() {
+      interactionRef.current = null;
+      window.removeEventListener('mousemove', handleInteractionMove);
+      window.removeEventListener('mouseup', handleInteractionEndEvent);
+      window.removeEventListener('touchmove', handleInteractionMove);
+      window.removeEventListener('touchend', handleInteractionEndEvent);
+      window.removeEventListener('touchcancel', handleInteractionEndEvent);
+    },
+    [handleInteractionMove],
+  );
 
   const handleInteractionStart = useCallback(
     (
@@ -390,8 +393,8 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
       isMarquee: false,
     });
 
-    const [previewVersion, setPreviewVersion] = useState(0);
-    const [minimapVersion, setMinimapVersion] = useState(0);
+    const [, setPreviewVersion] = useState(0);
+    const [, setMinimapVersion] = useState(0);
 
     const screenToWorld = useCallback(
       (screenPoint: Point): Point => {
@@ -716,7 +719,6 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
             type === 'group-rotate' &&
             groupInteraction.startAngle !== undefined
           ) {
-            const radPerPixel = 1 / (100 * zoom); // sensitivity
             const currentAngle = Math.atan2(
               currentPoint.y - (startBbox.minY * zoom + pan.y - 16),
               currentPoint.x - (center.x * zoom + pan.x),
@@ -979,7 +981,6 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
         touchStateRef.current.lastTouches = Array.from(touches);
       },
       [
-        pan,
         zoom,
         interactionMode,
         onSelectElement,
@@ -1094,18 +1095,12 @@ export const InfiniteCanvas = forwardRef<CanvasApi, InfiniteCanvasProps>(
       [elements],
     );
 
-    const displayElements = useMemo(
-      () => buildDisplayElements(sortedElements),
-      [buildDisplayElements, previewVersion, sortedElements],
-    );
+    const displayElements = buildDisplayElements(sortedElements);
 
-    const minimapElements = useMemo(
-      () =>
-        previewElementsRef.current.size > 0
-          ? minimapElementsRef.current
-          : displayElements,
-      [displayElements, minimapVersion],
-    );
+    const minimapElements =
+      previewElementsRef.current.size > 0
+        ? minimapElementsRef.current
+        : displayElements;
 
     const viewport = useMemo<ViewportData>(() => {
       const canvas = canvasRef.current;

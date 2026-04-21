@@ -20,7 +20,6 @@ import type {
   ArrowElement,
   DrawingElement,
   Point,
-  ElementType,
   AnalysisResult,
   IFrameElement,
   ElementUpdate,
@@ -423,7 +422,7 @@ const App: React.FC = () => {
   const [selectedElementIds, setSelectedElementIds] = useState<string[]>([]);
   const [resetView, setResetView] = useState<() => void>(() => () => {});
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedImages, setGeneratedImages] = useState<string[] | null>(null);
+  const [, setGeneratedImages] = useState<string[] | null>(null);
   const [generationHistory, setGenerationHistory] = useState<string[]>([]);
   const [isUrlPromptOpen, setIsUrlPromptOpen] = useState(false);
   const [urlPromptValue, setUrlPromptValue] = useState('https://');
@@ -440,9 +439,7 @@ const App: React.FC = () => {
   const [isMenuCollapsed, setIsMenuCollapsed] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [language, setLanguage] = useState<'en' | 'zh'>('zh');
-  const [panelAlignment, setPanelAlignment] = useState<'left' | 'right'>(
-    'left',
-  );
+  const [panelAlignment] = useState<'left' | 'right'>('left');
   const [interactionMode, setInteractionMode] = useState<'pan' | 'select'>(
     'pan',
   );
@@ -497,8 +494,7 @@ const App: React.FC = () => {
     useState<string>('');
   const [optimizationOpenaiModel, setOptimizationOpenaiModel] =
     useState<string>('gpt-4o');
-  const [optimizationGrounding, setOptimizationGrounding] =
-    useState<boolean>(true);
+  const [optimizationGrounding] = useState<boolean>(true);
 
   const [pendingImport, setPendingImport] = useState<PendingImportData | null>(
     null,
@@ -547,8 +543,6 @@ const App: React.FC = () => {
   const zIndexCounter = useRef(INITIAL_ELEMENTS.length);
   const dragCounter = useRef(0);
   const lastWorldMousePosition = useRef<Point | null>(null);
-
-  const ai = useRef<GoogleGenAI | null>(null);
 
   const t = useCallback(
     (key: string) => {
@@ -620,7 +614,7 @@ const App: React.FC = () => {
         try {
           msg = JSON.stringify(error);
           fullErrorString = msg;
-        } catch (e) {
+        } catch {
           msg = String(error);
           fullErrorString = msg;
         }
@@ -774,7 +768,7 @@ const App: React.FC = () => {
     (url: string, position?: Point) => {
       try {
         new URL(url);
-      } catch (_) {
+      } catch {
         setAiErrorMessage({
           en: 'Invalid URL provided.',
           zh: '提供的網址無效。',
@@ -1076,7 +1070,7 @@ const App: React.FC = () => {
         setOutpaintingState(null);
       }
     },
-    [outpaintingState, getAi, setElements],
+    [outpaintingState, getAi, setElements, handleAiError],
   );
 
   const handleAutoPromptGenerate = useCallback(
@@ -1602,6 +1596,10 @@ const App: React.FC = () => {
       openaiApiKey,
       openaiBaseUrl,
       generationCount,
+      elements,
+      generationGoogleSearch,
+      generationImageSearch,
+      generationThinkingLevel,
     ],
   );
 
@@ -1739,8 +1737,9 @@ const App: React.FC = () => {
     setElements((prev) =>
       prev.map((el) => {
         if (el.groupId === groupIdToUngroup) {
-          const { groupId, ...rest } = el;
-          return rest as CanvasElement;
+          const nextElement = { ...el };
+          delete (nextElement as { groupId?: string }).groupId;
+          return nextElement as CanvasElement;
         }
         return el;
       }),
@@ -1850,7 +1849,7 @@ const App: React.FC = () => {
         const gap = totalGap / (selected.length - 1);
 
         let currentX = leftMost;
-        const updates = selected.map((el, i) => {
+        const updates = selected.map((el) => {
           const newX = currentX + el.width / 2;
           currentX += el.width + gap;
           return {
@@ -1876,7 +1875,7 @@ const App: React.FC = () => {
         const gap = totalGap / (selected.length - 1);
 
         let currentY = topMost;
-        const updates = selected.map((el, i) => {
+        const updates = selected.map((el) => {
           const newY = currentY + el.height / 2;
           currentY += el.height + gap;
           return {
@@ -2132,16 +2131,6 @@ const App: React.FC = () => {
     );
   };
 
-  const downloadGeneratedImage = (imageUrl: string) => {
-    if (!imageUrl) return;
-    const link = document.createElement('a');
-    link.href = imageUrl;
-    link.download = `generated-canvas-image-${Date.now()}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   const downloadImage = useCallback(
     (elementId: string) => {
       if (!elementId) return;
@@ -2257,7 +2246,7 @@ const App: React.FC = () => {
           setSelectedElementIds(newElements.map((el: any) => el.id));
           return true;
         }
-      } catch (e) {}
+      } catch {}
 
       const position = getTargetPosition();
       addElement({
@@ -2338,7 +2327,7 @@ const App: React.FC = () => {
       } else {
         throw new Error('Clipboard API read not supported');
       }
-    } catch (err) {
+    } catch {
       try {
         const text = await navigator.clipboard.readText();
         if (text) processTextContent(text);
@@ -2848,6 +2837,7 @@ const App: React.FC = () => {
       optimizationProvider,
       optimizationModel,
       optimizationGrounding,
+      optimizationThinkingLevel,
       optimizationOpenaiBaseUrl,
       optimizationOpenaiApiKey,
       optimizationOpenaiModel,
@@ -2987,6 +2977,7 @@ const App: React.FC = () => {
       optimizationProvider,
       optimizationModel,
       optimizationGrounding,
+      optimizationThinkingLevel,
       optimizationOpenaiBaseUrl,
       optimizationOpenaiApiKey,
       optimizationOpenaiModel,

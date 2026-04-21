@@ -3,7 +3,6 @@ import type {
   CanvasElement,
   Point,
   ArrowElement,
-  NoteElement,
   AnalysisResult,
 } from '../types';
 
@@ -262,9 +261,13 @@ const TransformableElementComponent: React.FC<TransformableElementProps> = ({
   const isOutpaintingRef = useRef(isOutpainting);
 
   useEffect(() => {
-    if (!isSelected) {
+    if (isSelected) return;
+
+    const timeoutId = window.setTimeout(() => {
       setIsEditing(false);
-    }
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [isSelected]);
 
   useEffect(() => {
@@ -628,7 +631,7 @@ const TransformableElementComponent: React.FC<TransformableElementProps> = ({
           };
 
           switch (el.type) {
-            case 'note':
+            case 'note': {
               const alignmentClass =
                 el.textAlign === 'center' ? 'text-center' : 'text-left';
               return (
@@ -670,6 +673,7 @@ const TransformableElementComponent: React.FC<TransformableElementProps> = ({
                   )}
                 </div>
               );
+            }
             case 'image':
               return (
                 <img
@@ -759,7 +763,7 @@ const TransformableElementComponent: React.FC<TransformableElementProps> = ({
                   </div>
                 </div>
               );
-            case 'arrow':
+            case 'arrow': {
               // The SVG viewBox should be independent of the element's width/height to maintain aspect ratio
               const viewBoxWidth = 150;
               const viewBoxHeight = 30;
@@ -795,6 +799,7 @@ const TransformableElementComponent: React.FC<TransformableElementProps> = ({
                   </svg>
                 </div>
               );
+            }
             default:
               return null;
           }

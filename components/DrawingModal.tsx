@@ -400,6 +400,40 @@ export const DrawingModal: React.FC<DrawingModalProps> = ({
     [tool, color, brushSize, getPointFromEvent],
   );
 
+  const drawShape = useCallback(
+    (
+      ctx: CanvasRenderingContext2D,
+      shape: Tool,
+      start: Point,
+      end: Point,
+    ) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = brushSize;
+      ctx.globalCompositeOperation = 'source-over';
+      switch (shape) {
+        case 'line':
+          drawLine(ctx, start, end);
+          break;
+        case 'rectangle':
+          drawRectangle(ctx, start, end);
+          break;
+        case 'circle':
+          drawCircle(ctx, start, end);
+          break;
+        case 'triangle':
+          drawTriangle(ctx, start, end);
+          break;
+        case 'star':
+          drawStar(ctx, start, end);
+          break;
+        case 'arrow':
+          drawArrow(ctx, start, end);
+          break;
+      }
+    },
+    [brushSize, color],
+  );
+
   const finishDrawing = useCallback(() => {
     if (!isDrawing) return;
 
@@ -430,38 +464,7 @@ export const DrawingModal: React.FC<DrawingModalProps> = ({
     shapeStartPointRef.current = null;
     shapeEndPointRef.current = null;
     snapshotRef.current = null;
-  }, [isDrawing, saveHistoryState, tool]);
-
-  const drawShape = (
-    ctx: CanvasRenderingContext2D,
-    shape: Tool,
-    start: Point,
-    end: Point,
-  ) => {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = brushSize;
-    ctx.globalCompositeOperation = 'source-over';
-    switch (shape) {
-      case 'line':
-        drawLine(ctx, start, end);
-        break;
-      case 'rectangle':
-        drawRectangle(ctx, start, end);
-        break;
-      case 'circle':
-        drawCircle(ctx, start, end);
-        break;
-      case 'triangle':
-        drawTriangle(ctx, start, end);
-        break;
-      case 'star':
-        drawStar(ctx, start, end);
-        break;
-      case 'arrow':
-        drawArrow(ctx, start, end);
-        break;
-    }
-  };
+  }, [drawShape, isDrawing, saveHistoryState, tool]);
 
   const draw = useCallback(
     (e: React.MouseEvent | React.TouchEvent) => {
@@ -486,7 +489,7 @@ export const DrawingModal: React.FC<DrawingModalProps> = ({
         context.stroke();
       }
     },
-    [isDrawing, getPointFromEvent, tool, color, brushSize],
+    [isDrawing, getPointFromEvent, tool, drawShape],
   );
 
   const clearCanvas = () => {

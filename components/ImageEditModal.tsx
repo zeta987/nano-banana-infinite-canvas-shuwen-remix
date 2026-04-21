@@ -38,8 +38,8 @@ function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
   const max = Math.max(r, g, b),
     min = Math.min(r, g, b);
   let h = 0,
-    s = 0,
-    l = (max + min) / 2;
+    s = 0;
+  const l = (max + min) / 2;
   if (max !== min) {
     const d = max - min;
     s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
@@ -630,7 +630,12 @@ export const ImageEditModal: React.FC<ImageEditModalProps> = ({
               const sFactor = shadow / 100;
 
               for (let i = 0; i < data.length; i += 4) {
-                let [h, s, l] = rgbToHsl(data[i], data[i + 1], data[i + 2]);
+                const [h, s, initialL] = rgbToHsl(
+                  data[i],
+                  data[i + 1],
+                  data[i + 2],
+                );
+                let l = initialL;
 
                 if (sFactor !== 0) {
                   l = l ** (1 / (1 + sFactor));
